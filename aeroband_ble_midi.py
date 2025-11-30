@@ -105,15 +105,34 @@ class AerobandBLEMIDI:
                         print("Connected!")
                         
                         # Discover MIDI service
+                        print("Discovering services...")
                         midi_service = await self.connection.service(_MIDI_SERVICE_UUID)
+                        
+                        if midi_service is None:
+                            print("MIDI service not found")
+                            await self.connection.disconnect()
+                            continue
+                        
+                        print("Getting MIDI characteristic...")
                         self.midi_characteristic = await midi_service.characteristic(_MIDI_CHAR_UUID)
                         
+                        if self.midi_characteristic is None:
+                            print("MIDI characteristic not found")
+                            await self.connection.disconnect()
+                            continue
+                        
                         self.connected = True
+                        print("MIDI service ready!")
                         return True
                         
                     except Exception as e:
                         print(f"Connection failed: {e}")
-                        return False
+                        if self.connection:
+                            try:
+                                await self.connection.disconnect()
+                            except:
+                                pass
+                        continue
                 
                 # Also check for "Aeroband" or "PocketDrum" in device name
                 name = result.name()
@@ -125,14 +144,34 @@ class AerobandBLEMIDI:
                         print("Connected!")
                         
                         # Try to find MIDI service
+                        print("Discovering services...")
                         midi_service = await self.connection.service(_MIDI_SERVICE_UUID)
+                        
+                        if midi_service is None:
+                            print("MIDI service not found")
+                            await self.connection.disconnect()
+                            continue
+                        
+                        print("Getting MIDI characteristic...")
                         self.midi_characteristic = await midi_service.characteristic(_MIDI_CHAR_UUID)
                         
+                        if self.midi_characteristic is None:
+                            print("MIDI characteristic not found")
+                            await self.connection.disconnect()
+                            continue
+                        
                         self.connected = True
+                        print("MIDI service ready!")
                         return True
                         
                     except Exception as e:
                         print(f"Connection failed: {e}")
+                        if self.connection:
+                            try:
+                                await self.connection.disconnect()
+                            except:
+                                pass
+                        continue
         
         print("Aeroband guitar not found")
         return False
