@@ -267,10 +267,9 @@ class ChordTrainer:
                     # Open string - draw red O
                     self.tft.text("O", start_x - 18, string_y - 4, self.COLOR_RED)
                 else:
-                    # Fretted note - draw red square
+                    # Fretted note - draw smaller red square (4x4 instead of 10x10)
                     fret_x = start_x + (best_fret * fret_width) - (fret_width // 2)
-                    self.tft.fill_rect(fret_x - 5, string_y - 5, 10, 10, self.COLOR_RED)
-                    self.tft.fill_rect(fret_x - 3, string_y - 3, 6, 6, self.COLOR_RED)
+                    self.tft.fill_rect(fret_x - 2, string_y - 2, 4, 4, self.COLOR_RED)
             else:
                 print(f"Note {note} not within frets 0-4 on any string")
     
@@ -550,10 +549,9 @@ class ChordTrainer:
                                         print(f"Wrong! Expected {target_chord}, got {detected_chord}")
                                         wrong_notes = set(self.played_notes)  # Make a copy
                                         self.display_wrong_chord(detected_chord, wrong_notes, target_chord)
-                                        await asyncio.sleep_ms(2000)
                                         
-                                        # Don't clear last_detected_chord - just redisplay target
-                                        self.display_target_chord()
+                                        # Reset last_detected_chord so next chord attempt will be detected
+                                        self.last_detected_chord = None
                         
                         notes_hit = [False, False, False, False, False, False]
                     elif msg[0] == 'note_off':
