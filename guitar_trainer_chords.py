@@ -474,14 +474,33 @@ class ChordTrainer:
         # Show first target if in sequence mode
         if self.sequence_mode:
             self.display_target_chord()
-        notes_hit = False  # For strings 1-6
+        notes_hit = False
         last_note = None
         time_last_chord = 0
+        strum_start_time = 0  # Track when strum started
+        strum_timeout_ms = 1500  # 1.5 second timeout
         started = False
         last_string = 0
         up = False
         try:
             while self.connected:
+                # Check if strum timed out
+                if started and utime.ticks_diff(utime.ticks_ms(), strum_start_time) > strum_timeout_ms:
+                    print("Strum timeout! Displaying incomplete chord")
+                    # Capture whatever was played
+                    played_notes_copy = set(self.played_notes)
+                    detected_chord = detect_chord(self.played_notes)
+                    
+                    if self.sequence_mode:
+                        target_chord = self.chord_sequence[self.current_chord_index]
+                        print(f"Incomplete! Expected {target_chord}, got {detected_chord if detected_chord else 'incomplete'}")
+                        self.display_wrong_chord(detected_chord if detected_chord else "???", played_notes_copy, target_chord)
+                    
+                    # Reset for next attempt
+                    started = False
+                    notes_hit = False
+                    self.played_notes.clear()
+                
                 # Wait for MIDI data
                 data = await self.midi_characteristic.notified()
                 
@@ -498,20 +517,23 @@ class ChordTrainer:
                         self.played_notes.add(note)
 
                         if utime.ticks_diff(utime.ticks_ms(), time_last_chord) > 500:
-                            print("Resetting notes_hit due to time difference")
-                            notes_hit = [False, False, False, False, False, False]
+                            print("Resetting due to time difference")
+                            started = False
+                            notes_hit = False
 
                         time_last_chord = utime.ticks_ms()
                         last_note = note
-                        string_n = STRING_NUMBER.get(note) 
+                        string_n = STRING_NUMBER.get(note)
+                        if string_n is None:
+                            print(f"WARNING: Note {note} not in STRING_NUMBER mapping!")
                         string_num = string_n - 1 if string_n else 0
-
-                        print(notes_hit)
+                        print(f"Note {note} -> String {string_num + 1}")
 
                         if not started: 
                             if string_num == 5 or string_num == 0:
-                                print('Started playing strings!')
+                                print('Started strum!')
                                 started = True
+                                strum_start_time = utime.ticks_ms()  # Start timer
                                 if string_num == 5:
                                     up = False       
                                 else:
