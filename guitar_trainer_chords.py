@@ -474,9 +474,12 @@ class ChordTrainer:
         # Show first target if in sequence mode
         if self.sequence_mode:
             self.display_target_chord()
-        notes_hit = [False, False, False, False, False, False]  # For strings 1-6
+        notes_hit = False  # For strings 1-6
         last_note = None
         time_last_chord = 0
+        started = False
+        last_string = 0
+        up = False
         try:
             while self.connected:
                 # Wait for MIDI data
@@ -489,9 +492,11 @@ class ChordTrainer:
                     if msg[0] == 'note_on':
                         note = msg[1]
                         print(f"Note ON: {note}")
-                        self.played_notes.add(note)
                         if note == last_note:
                             continue
+
+                        self.played_notes.add(note)
+
                         if utime.ticks_diff(utime.ticks_ms(), time_last_chord) > 500:
                             print("Resetting notes_hit due to time difference")
                             notes_hit = [False, False, False, False, False, False]
@@ -500,60 +505,82 @@ class ChordTrainer:
                         last_note = note
                         string_n = STRING_NUMBER.get(note) 
                         string_num = string_n - 1 if string_n else 0
-                        notes_hit[string_num] = True
+
                         print(notes_hit)
-                        if not all(notes_hit):
+
+                        if not started: 
+                            if string_num == 5 or string_num == 0:
+                                print('Started playing strings!')
+                                started = True
+                                if string_num == 5:
+                                    up = False       
+                                else:
+                                    up = True
+                            continue
+
+                        if up:
+                            if string_num == 5:
+                                print("All strings played! -------------------------------------------------------------------")
+                                started = False
+                                up = False
+                                notes_hit = True
+                        else:
+                            if string_num == 0:
+                                print("All strings played! -------------------------------------------------------------------")
+                                started = False
+                                up = True
+                                notes_hit = True  
+
+                        last_string = string_num
+                        if not notes_hit:
                             continue
                         
                         
                         print("All strings played! -------------------------------------------------------------------")
 
+                        # Capture the played notes
+                        played_notes_copy = set(self.played_notes)
 
-                        # Check for chord after a short delay to collect all notes
-                        #await asyncio.sleep_ms(100)
                         # Detect chord
                         detected_chord = detect_chord(self.played_notes)
                         
-                        if detected_chord and detected_chord != self.last_detected_chord:
-                            self.last_detected_chord = detected_chord
-                            print(f"Detected chord: {detected_chord} {detected_chord.index}")
+                        if self.sequence_mode:
+                            target_chord = self.chord_sequence[self.current_chord_index]
                             
-                            if self.sequence_mode:
-                                # Check if correct chord
-                                if self.current_chord_index < len(self.chord_sequence):
-                                    target_chord = self.chord_sequence[self.current_chord_index]
+                            if detected_chord == target_chord:
+                                # Correct!
+                                print("Correct chord!")
+                                self.display_correct_chord(detected_chord)
+                                await asyncio.sleep_ms(3000)
+                                
+                                # Move to next chord
+                                self.current_chord_index += 1
+                                
+                                if self.current_chord_index >= len(self.chord_sequence):
+                                    # Sequence complete!
+                                    print("Sequence complete!")
+                                    self.display_sequence_complete()
+                                    await asyncio.sleep(3)
                                     
-                                    if detected_chord == target_chord:
-                                        # Correct!
-                                        print("Correct chord!")
-                                        self.display_correct_chord(detected_chord)
-                                        await asyncio.sleep_ms(3000)
-                                        
-                                        # Move to next chord
-                                        self.current_chord_index += 1
-                                        
-                                        if self.current_chord_index >= len(self.chord_sequence):
-                                            # Sequence complete!
-                                            print("Sequence complete!")
-                                            self.display_sequence_complete()
-                                            await asyncio.sleep(3)
-                                            
-                                            # Restart
-                                            self.current_chord_index = 0
-                                            self.display_target_chord()
-                                        else:
-                                            # Show next target
-                                            self.display_target_chord()
-                                    else:
-                                        # Wrong chord - capture the notes NOW before they change
-                                        print(f"Wrong! Expected {target_chord}, got {detected_chord}")
-                                        wrong_notes = set(self.played_notes)  # Make a copy
-                                        self.display_wrong_chord(detected_chord, wrong_notes, target_chord)
-                                        
-                                        # Reset last_detected_chord so next chord attempt will be detected
-                                        self.last_detected_chord = None
+                                    # Restart
+                                    self.current_chord_index = 0
+                                    self.display_target_chord()
+                                else:
+                                    # Show next target
+                                    self.display_target_chord()
+                            else:
+                                # Wrong chord OR no chord detected - ALWAYS show what was played
+                                print(f"Wrong! Expected {target_chord}, got {detected_chord if detected_chord else 'unknown'}")
+                                print(f"About to call display_wrong_chord with notes: {played_notes_copy}")
+                                self.display_wrong_chord(detected_chord if detected_chord else "???", played_notes_copy, target_chord)
+                                print("display_wrong_chord completed")
+                                
+                                # Reset last_detected_chord so next chord attempt will be detected
+                                self.last_detected_chord = None
                         
+                        # ALWAYS reset notes_hit after processing
                         notes_hit = [False, False, False, False, False, False]
+                        print("Reset notes_hit for next attempt")
                     elif msg[0] == 'note_off':
                         note = msg[1]
                         print(f"Note OFF: {note}")
