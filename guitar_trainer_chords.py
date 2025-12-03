@@ -176,12 +176,87 @@ class ChordTrainer:
         """Draw text using the large font"""
         self.tft.draw_text(text, x, y, color)
     
-    def draw_chord_fretboard(self, chord_name, highlight_color):
+    def draw_timeout_ring(self, progress_percent):
+        """Draw a progress ring around the edge of the display
+        
+        Args:
+            progress_percent: 0.0 to 1.0, how much of the ring to draw
+        """
+        import math
+        
+        center_x = 120
+        center_y = 120
+        radius = 118  # Just inside the 240x240 display
+        
+        # Calculate how many degrees to draw (0-360)
+        degrees = int(progress_percent * 360)
+        
+        # Draw the ring pixel by pixel
+        for angle in range(degrees):
+            # Convert angle to radians (start from top, go clockwise)
+            rad = math.radians(angle - 90)  # -90 to start at top
+            x = int(center_x + radius * math.cos(rad))
+            y = int(center_y + radius * math.sin(rad))
+            
+            # Draw a thicker ring (2 pixels)
+            self.tft.pixel(x, y, self.COLOR_YELLOW)
+            # Inner ring
+            x2 = int(center_x + (radius - 1) * math.cos(rad))
+            y2 = int(center_y + (radius - 1) * math.sin(rad))
+            self.tft.pixel(x2, y2, self.COLOR_YELLOW)
+    
+    def update_live_display(self, target_chord, played_notes, strum_progress):
+        """Update display in real-time as notes are played
+        
+        Args:
+            target_chord: The chord they should be playing
+            played_notes: Set of notes played so far
+            strum_progress: 0.0 to 1.0 for timeout ring
+        """
+        # Clear and redraw
+        self.tft.fill(self.COLOR_BLACK)
+        
+        # Show progress
+        progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
+        self.tft.text(progress_text, 90, 5, self.COLOR_WHITE)
+        
+        # Show target chord name
+        x_pos = 70 if len(target_chord) > 1 else 90
+        self.draw_large_text(target_chord, x_pos, 30, self.COLOR_ORANGE)
+        
+        # Determine which strings have been struck (green) vs not struck (white)
+        string_colors = []
+        for string_num in range(1, 7):
+            open_note = OPEN_STRING_NOTES[string_num - 1]
+            string_was_struck = False
+            
+            # Check if any note from this string was played
+            for fret in range(25):
+                note = open_note + fret
+                if note in played_notes:
+                    string_was_struck = True
+                    break
+            
+            string_colors.append(self.COLOR_GREEN if string_was_struck else self.COLOR_WHITE)
+        
+        # Draw fretboard with target chord positions and colored strings
+        self.draw_chord_fretboard(target_chord, self.COLOR_ORANGE, string_colors)
+        
+        # Draw red dots for notes played
+        self.draw_played_notes_overlay(played_notes)
+        
+        # Draw timeout ring
+        self.draw_timeout_ring(strum_progress)
+        
+        self.tft.show()
+    
+    def draw_chord_fretboard(self, chord_name, highlight_color, string_colors=None):
         """Draw a fretboard diagram showing all finger positions for a chord
         
         Args:
             chord_name: Name of the chord (e.g., 'C', 'G', 'Am')
             highlight_color: Color to highlight the positions
+            string_colors: Optional list of 6 colors for each string (for hit/miss indication)
         """
         chord_shape = get_chord_shape(chord_name)
         if not chord_shape:
@@ -193,12 +268,14 @@ class ChordTrainer:
         string_spacing = 16  # Was 8, now 16
         fret_width = 40      # Was 30, now 40
         
-        # Draw 6 strings (horizontal lines) - thicker
+        # Draw 6 strings (horizontal lines) - thicker, with optional color coding
         for i in range(6):
             y = start_y + (i * string_spacing)
+            # Use color from string_colors if provided, otherwise white
+            string_color = string_colors[i] if string_colors else self.COLOR_WHITE
             # Draw thicker lines
-            self.tft.hline(start_x, y, 160, self.COLOR_WHITE)
-            self.tft.hline(start_x, y+1, 160, self.COLOR_WHITE)
+            self.tft.hline(start_x, y, 160, string_color)
+            self.tft.hline(start_x, y+1, 160, string_color)
         
         # Draw 4 frets (vertical lines) - thicker
         for i in range(1, 5):
@@ -321,6 +398,11 @@ class ChordTrainer:
         """Display when wrong chord is played - show target in orange, played in red"""
         print(f"display_wrong_chord called: played={played_chord}, notes={played_notes}, target={target_chord}")
         
+        # Clear the screen completely
+        self.tft.fill(self.COLOR_BLACK)
+        self.tft.show()  # Force clear to display
+        
+        # Now redraw everything
         self.tft.fill(self.COLOR_BLACK)
         
         # Show progress
@@ -331,8 +413,28 @@ class ChordTrainer:
         x_pos = 70 if len(target_chord) > 1 else 90
         self.draw_large_text(target_chord, x_pos, 30, self.COLOR_ORANGE)
         
-        # Draw target chord in orange
-        self.draw_chord_fretboard(target_chord, self.COLOR_ORANGE)
+        # Determine string colors based on whether each string was struck
+        string_colors = []
+        
+        # For each string (1-6), check if ANY note from that string was played
+        for string_num in range(1, 7):
+            open_note = OPEN_STRING_NOTES[string_num - 1]
+            string_was_struck = False
+            
+            # Check if any note within frets 0-24 on this string was played
+            for fret in range(25):  # Check up to 24 frets
+                note = open_note + fret
+                if note in played_notes:
+                    string_was_struck = True
+                    break
+            
+            if string_was_struck:
+                string_colors.append(self.COLOR_GREEN)  # String was struck
+            else:
+                string_colors.append(self.COLOR_RED)    # String was NOT struck
+        
+        # Draw target chord with color-coded strings
+        self.draw_chord_fretboard(target_chord, self.COLOR_ORANGE, string_colors)
         
         # Overlay played notes in red
         print(f"Drawing played notes overlay with {len(played_notes)} notes")
@@ -484,22 +586,36 @@ class ChordTrainer:
         up = False
         try:
             while self.connected:
-                # Check if strum timed out
-                if started and utime.ticks_diff(utime.ticks_ms(), strum_start_time) > strum_timeout_ms:
-                    print("Strum timeout! Displaying incomplete chord")
-                    # Capture whatever was played
-                    played_notes_copy = set(self.played_notes)
-                    detected_chord = detect_chord(self.played_notes)
+                # Update timeout ring if strum is in progress
+                if started:
+                    elapsed = utime.ticks_diff(utime.ticks_ms(), strum_start_time)
+                    progress = min(1.0, elapsed / strum_timeout_ms)
+                    self.draw_timeout_ring(progress)
+                    self.tft.show()
                     
-                    if self.sequence_mode:
-                        target_chord = self.chord_sequence[self.current_chord_index]
-                        print(f"Incomplete! Expected {target_chord}, got {detected_chord if detected_chord else 'incomplete'}")
-                        self.display_wrong_chord(detected_chord if detected_chord else "???", played_notes_copy, target_chord)
-                    
-                    # Reset for next attempt
-                    started = False
-                    notes_hit = False
-                    self.played_notes.clear()
+                    # Check if strum timed out
+                    if elapsed > strum_timeout_ms:
+                        print("Strum timeout! Displaying incomplete chord")
+                        # Capture whatever was played
+                        played_notes_copy = set(self.played_notes)
+                        detected_chord = detect_chord(self.played_notes)
+                        
+                        if self.sequence_mode:
+                            target_chord = self.chord_sequence[self.current_chord_index]
+                            print(f"Incomplete! Expected {target_chord}, got {detected_chord if detected_chord else 'incomplete'}")
+                            self.display_wrong_chord(detected_chord if detected_chord else "???", played_notes_copy, target_chord)
+                            
+                            # Wait a moment to show the incomplete chord
+                            await asyncio.sleep_ms(2000)
+                        
+                        # Reset for next attempt
+                        started = False
+                        notes_hit = False
+                        self.played_notes.clear()
+                        
+                        # Redisplay clean target for next attempt
+                        if self.sequence_mode:
+                            self.update_live_display(target_chord, set(), 0.0)
                 
                 # Wait for MIDI data
                 data = await self.midi_characteristic.notified()
@@ -511,10 +627,12 @@ class ChordTrainer:
                     if msg[0] == 'note_on':
                         note = msg[1]
                         print(f"Note ON: {note}")
+                        print(f"Total played notes so far: {sorted(self.played_notes)}")
                         if note == last_note:
                             continue
 
                         self.played_notes.add(note)
+                        print(f"Added note {note}, now have: {sorted(self.played_notes)}")
 
                         if utime.ticks_diff(utime.ticks_ms(), time_last_chord) > 500:
                             print("Resetting due to time difference")
@@ -538,22 +656,34 @@ class ChordTrainer:
                                     up = False       
                                 else:
                                     up = True
+                        
+                        # Update display in real-time as notes are played
+                        if started and self.sequence_mode:
+                            target_chord = self.chord_sequence[self.current_chord_index]
+                            elapsed = utime.ticks_diff(utime.ticks_ms(), strum_start_time)
+                            progress = min(1.0, elapsed / strum_timeout_ms)
+                            self.update_live_display(target_chord, self.played_notes, progress)
+                        
+                        if not started:
                             continue
 
+                        # Check if we've completed a strum (reached opposite end)
                         if up:
                             if string_num == 5:
-                                print("All strings played! -------------------------------------------------------------------")
+                                print("Strum complete (reached string 6)! -------------------------------------------------------------------")
                                 started = False
                                 up = False
                                 notes_hit = True
                         else:
                             if string_num == 0:
-                                print("All strings played! -------------------------------------------------------------------")
+                                print("Strum complete (reached string 1)! -------------------------------------------------------------------")
                                 started = False
                                 up = True
                                 notes_hit = True  
 
                         last_string = string_num
+                        
+                        # If we haven't completed the strum yet, continue collecting notes
                         if not notes_hit:
                             continue
                         
@@ -562,17 +692,29 @@ class ChordTrainer:
 
                         # Capture the played notes
                         played_notes_copy = set(self.played_notes)
-
-                        # Detect chord
-                        detected_chord = detect_chord(self.played_notes)
                         
+                        print(f"Played notes: {sorted(played_notes_copy)}")
+
                         if self.sequence_mode:
                             target_chord = self.chord_sequence[self.current_chord_index]
+                            expected_notes = set(CHORD_MIDI_NOTES.get(target_chord, []))
+                            print(f"Target chord: {target_chord}, Expected notes: {sorted(expected_notes)}")
                             
-                            if detected_chord == target_chord:
+                            # Show which notes match
+                            matching = played_notes_copy.intersection(expected_notes)
+                            missing = expected_notes - played_notes_copy
+                            extra = played_notes_copy - expected_notes
+                            print(f"Matching notes: {sorted(matching)}")
+                            print(f"Missing notes: {sorted(missing)}")
+                            print(f"Extra notes: {sorted(extra)}")
+                            
+                            # Check if notes match exactly (all required notes, no missing, no extra)
+                            is_correct = (matching == expected_notes) and (len(extra) == 0)
+                            
+                            if is_correct:
                                 # Correct!
                                 print("Correct chord!")
-                                self.display_correct_chord(detected_chord)
+                                self.display_correct_chord(target_chord)
                                 await asyncio.sleep_ms(3000)
                                 
                                 # Move to next chord
@@ -584,18 +726,27 @@ class ChordTrainer:
                                     self.display_sequence_complete()
                                     await asyncio.sleep(3)
                                     
-                                    # Restart
-                                    self.current_chord_index = 0
-                                    self.display_target_chord()
+                                    # Return to menu instead of restarting
+                                    print("Returning to menu...")
+                                    return  # Exit handle_midi to go back to menu
                                 else:
                                     # Show next target
                                     self.display_target_chord()
                             else:
-                                # Wrong chord OR no chord detected - ALWAYS show what was played
-                                print(f"Wrong! Expected {target_chord}, got {detected_chord if detected_chord else 'unknown'}")
+                                # Wrong - show what was played
+                                print(f"Wrong! Not enough matching notes")
                                 print(f"About to call display_wrong_chord with notes: {played_notes_copy}")
-                                self.display_wrong_chord(detected_chord if detected_chord else "???", played_notes_copy, target_chord)
+                                self.display_wrong_chord("???", played_notes_copy, target_chord)
                                 print("display_wrong_chord completed")
+                                
+                                # Wait a moment to show the wrong chord
+                                await asyncio.sleep_ms(2000)
+                                
+                                # Clear played notes for next attempt
+                                self.played_notes.clear()
+                                
+                                # Redisplay the target chord for next attempt
+                                self.update_live_display(target_chord, set(), 0.0)
                                 
                                 # Reset last_detected_chord so next chord attempt will be detected
                                 self.last_detected_chord = None
@@ -690,38 +841,43 @@ class ChordTrainer:
             #await asyncio.sleep_ms(10)
     
     async def run(self):
-        """Main run loop"""
+        """Main run loop with menu system"""
         if not await self.scan_and_connect():
             print("Failed to connect")
             return
         
-        # Show menu and wait for selection
-        print("Showing practice menu...")
-        selected_chords = await self.show_menu_and_wait_for_selection()
+        # Loop to allow returning to menu after completing a practice
+        while True:
+            # Show menu and wait for selection
+            print("Showing practice menu...")
+            selected_chords = await self.show_menu_and_wait_for_selection()
+            
+            # Set the chord sequence
+            self.chord_sequence = selected_chords
+            self.sequence_mode = len(self.chord_sequence) > 0
+            self.current_chord_index = 0
+            
+            if self.sequence_mode:
+                print(f"Starting practice: {len(self.chord_sequence)} chords")
+            else:
+                print("Starting free play mode")
+            
+            print("Starting MIDI handler...")
+            
+            try:
+                await self.handle_midi()
+                # When handle_midi returns (sequence complete), loop back to menu
+            except Exception as e:
+                print(f"Error: {e}")
+                break  # Exit on error
         
-        # Set the chord sequence
-        self.chord_sequence = selected_chords
-        self.sequence_mode = len(self.chord_sequence) > 0
-        self.current_chord_index = 0
-        
-        if self.sequence_mode:
-            print(f"Starting practice: {len(self.chord_sequence)} chords")
-        else:
-            print("Starting free play mode")
-        
-        print("Starting MIDI handler...")
-        
-        try:
-            await self.handle_midi()
-        except Exception as e:
-            print(f"Error: {e}")
-        finally:
-            if self.connection:
-                try:
-                    await self.connection.disconnect()
-                except:
-                    pass
-            print("Done")
+        # Disconnect when exiting
+        if self.connection:
+            try:
+                await self.connection.disconnect()
+            except:
+                pass
+        print("Done")
 
 # Main
 async def main():
