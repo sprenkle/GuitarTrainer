@@ -337,7 +337,7 @@ class ChordTrainer:
             
             # Draw the red marker on the best string
             if best_string is not None:
-                print(f"Drawing note {note} on string {best_string}, fret {best_fret}")
+                #print(f"Drawing note {note} on string {best_string}, fret {best_fret}")
                 string_y = start_y + ((best_string - 1) * string_spacing)
                 
                 if best_fret == 0:
@@ -586,37 +586,7 @@ class ChordTrainer:
         up = False
         try:
             while self.connected:
-                # Update timeout ring if strum is in progress
-                if started:
-                    elapsed = utime.ticks_diff(utime.ticks_ms(), strum_start_time)
-                    progress = min(1.0, elapsed / strum_timeout_ms)
-                    self.draw_timeout_ring(progress)
-                    self.tft.show()
-                    
-                    # Check if strum timed out
-                    if elapsed > strum_timeout_ms:
-                        print("Strum timeout! Displaying incomplete chord")
-                        # Capture whatever was played
-                        played_notes_copy = set(self.played_notes)
-                        detected_chord = detect_chord(self.played_notes)
-                        
-                        if self.sequence_mode:
-                            target_chord = self.chord_sequence[self.current_chord_index]
-                            print(f"Incomplete! Expected {target_chord}, got {detected_chord if detected_chord else 'incomplete'}")
-                            self.display_wrong_chord(detected_chord if detected_chord else "???", played_notes_copy, target_chord)
-                            
-                            # Wait a moment to show the incomplete chord
-                            await asyncio.sleep_ms(2000)
-                        
-                        # Reset for next attempt
-                        started = False
-                        notes_hit = False
-                        self.played_notes.clear()
-                        
-                        # Redisplay clean target for next attempt
-                        if self.sequence_mode:
-                            self.update_live_display(target_chord, set(), 0.0)
-                
+               
                 # Wait for MIDI data
                 data = await self.midi_characteristic.notified()
                 
@@ -626,26 +596,28 @@ class ChordTrainer:
                 if msg:
                     if msg[0] == 'note_on':
                         note = msg[1]
-                        print(f"Note ON: {note}")
-                        print(f"Total played notes so far: {sorted(self.played_notes)}")
+
+                        string_n = STRING_NUMBER.get(note)
+                        if string_n is None:
+                            print(f"WARNING: Note {note} not in STRING_NUMBER mapping!")
+                        string_num = string_n - 1 if string_n else 0
+                        print(f"Note {note} -> String {string_num + 1}")
+
                         if note == last_note:
                             continue
 
                         self.played_notes.add(note)
+
                         print(f"Added note {note}, now have: {sorted(self.played_notes)}")
 
                         if utime.ticks_diff(utime.ticks_ms(), time_last_chord) > 500:
                             print("Resetting due to time difference")
                             started = False
                             notes_hit = False
+                            self.played_notes = set()
 
                         time_last_chord = utime.ticks_ms()
                         last_note = note
-                        string_n = STRING_NUMBER.get(note)
-                        if string_n is None:
-                            print(f"WARNING: Note {note} not in STRING_NUMBER mapping!")
-                        string_num = string_n - 1 if string_n else 0
-                        print(f"Note {note} -> String {string_num + 1}")
 
                         if not started: 
                             if string_num == 5 or string_num == 0:
@@ -709,7 +681,7 @@ class ChordTrainer:
                             print(f"Extra notes: {sorted(extra)}")
                             
                             # Check if notes match exactly (all required notes, no missing, no extra)
-                            is_correct = (matching == expected_notes) and (len(extra) == 0)
+                            is_correct = played_notes_copy.issuperset(expected_notes)
                             
                             if is_correct:
                                 # Correct!
@@ -754,14 +726,7 @@ class ChordTrainer:
                         # ALWAYS reset notes_hit after processing
                         notes_hit = [False, False, False, False, False, False]
                         print("Reset notes_hit for next attempt")
-                    elif msg[0] == 'note_off':
-                        note = msg[1]
-                        print(f"Note OFF: {note}")
-                        self.played_notes.discard(note)
-                        
-                        # Reset chord detection when all notes released
-                        if len(self.played_notes) == 0:
-                            self.last_detected_chord = None
+                    
                 
                 # await asyncio.sleep_ms(10)
                 
