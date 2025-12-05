@@ -648,6 +648,10 @@ class ChordTrainer:
         
         print("Listening for MIDI...")
         
+        # Menu selection notes (23rd fret) - only first 5 strings
+        # Using 23rd fret to avoid conflicts with chord notes (e.g., G chord uses 67)
+        selection_notes = [87, 82, 78, 73, 68]
+        
         # Show first target if in sequence mode
         if self.sequence_mode:
             self.display_target_chord()
@@ -689,6 +693,32 @@ class ChordTrainer:
                     if msg[0] == 'note_on':
                         note = msg[1]
                         print(f"Note On: {note}")
+                        
+                        # Check if it's a menu selection note (22nd fret) - switch practice mode
+                        if note in selection_notes:
+                            selected_index = selection_notes.index(note)
+                            practice_options = [
+                                ('Simple 3', ['C', 'G', 'D']),
+                                ('Classic 4', ['C', 'G', 'Am', 'Em']),
+                                ('All Basic', ['C', 'G', 'D', 'A', 'E', 'Am', 'Em', 'Dm']),
+                                ('Major Chords', ['C', 'D', 'E', 'F', 'G', 'A']),
+                                ('Minor Chords', ['Am', 'Dm', 'Em']),
+                                ('Power Practice', ['E', 'A', 'D', 'G']),
+                            ]
+                            if selected_index < len(practice_options):
+                                name, new_sequence = practice_options[selected_index]
+                                print(f"Switching to: {name}")
+                                print(f"New chord sequence: {new_sequence}")
+                                self.chord_sequence = new_sequence
+                                self.current_chord_index = 0
+                                print(f"Current chord index: {self.current_chord_index}")
+                                print(f"First chord should be: {new_sequence[0] if new_sequence else 'EMPTY'}")
+                                self.played_notes = [None] * 6
+                                last_note = None
+                                notes_hit = False
+                                started = False
+                                self.display_target_chord()
+                                continue
                         
                         # Check time difference FIRST before processing
                         if utime.ticks_diff(utime.ticks_ms(), time_last_chord) > 500:
@@ -814,14 +844,13 @@ class ChordTrainer:
                                 self.current_chord_index += 1
                                 
                                 if self.current_chord_index >= len(self.chord_sequence):
-                                    # Sequence complete!
-                                    print("Sequence complete!")
+                                    # Sequence complete! Reset to start and repeat
+                                    print("Sequence complete! Starting over...")
+                                    self.current_chord_index = 0
                                     self.display_sequence_complete()
-                                    await asyncio.sleep(3)
-                                    
-                                    # Return to menu instead of restarting
-                                    print("Returning to menu...")
-                                    return  # Exit handle_midi to go back to menu
+                                    await asyncio.sleep(2)
+                                    # Show first target again
+                                    self.display_target_chord()
                                 else:
                                     # Show next target
                                     self.display_target_chord()
@@ -869,10 +898,10 @@ class ChordTrainer:
             ('All Basic', ['C', 'G', 'D', 'A', 'E', 'Am', 'Em', 'Dm']),
             ('Major Chords', ['C', 'D', 'E', 'F', 'G', 'A']),
             ('Minor Chords', ['Am', 'Dm', 'Em']),
-            ('Free Play', []),
+            ('Power Practice', ['E', 'A', 'D', 'G']),
         ]
         
-        # MIDI notes for 22nd fret on each string (high to low)
+        # MIDI notes for menu selection - 22nd fret on each string
         # String 1 (high E): 64 + 22 = 86
         # String 2 (B): 59 + 22 = 81
         # String 3 (G): 55 + 22 = 77
@@ -911,7 +940,7 @@ class ChordTrainer:
             
             if msg and msg[0] == 'note_on':
                 note = msg[1]
-                print(f"Note received: {note}")
+                print(f"Menu - Note received: {note}")
                 
                 # Check if it's a 22nd fret note
                 if note in selection_notes:
@@ -925,7 +954,7 @@ class ChordTrainer:
                         self.tft.text("Selected:", 80, 100, self.COLOR_GREEN)
                         self.tft.text(name, 85, 120, self.COLOR_YELLOW)
                         self.tft.show()
-                        #await asyncio.sleep_ms(1000)
+                        await asyncio.sleep_ms(500)
                         
                         return chords
             
@@ -937,30 +966,24 @@ class ChordTrainer:
             print("Failed to connect")
             return
         
-        # Loop to allow returning to menu after completing a practice
-        while True:
-            # Show menu and wait for selection
-            print("Showing practice menu...")
-            selected_chords = await self.show_menu_and_wait_for_selection()
-            
-            # Set the chord sequence
-            self.chord_sequence = selected_chords
-            self.sequence_mode = len(self.chord_sequence) > 0
-            self.current_chord_index = 0
-            
-            if self.sequence_mode:
-                print(f"Starting practice: {len(self.chord_sequence)} chords")
-            else:
-                print("Starting free play mode")
-            
-            print("Starting MIDI handler...")
-            
-            try:
-                await self.handle_midi()
-                # When handle_midi returns (sequence complete), loop back to menu
-            except Exception as e:
-                print(f"Error: {e}")
-                break  # Exit on error
+        # Show menu once and wait for initial selection
+        print("Showing practice menu...")
+        selected_chords = await self.show_menu_and_wait_for_selection()
+        
+        # Set the chord sequence
+        self.chord_sequence = selected_chords
+        self.sequence_mode = True  # Always in sequence mode now
+        self.current_chord_index = 0
+        
+        print(f"Starting practice: {len(self.chord_sequence)} chords")
+        print("Starting MIDI handler...")
+        print("Play 22nd fret on strings 1-6 anytime to switch practice mode")
+        
+        try:
+            await self.handle_midi()
+            # handle_midi runs continuously, switching modes as needed
+        except Exception as e:
+            print(f"Error: {e}")
         
         # Disconnect when exiting
         if self.connection:
