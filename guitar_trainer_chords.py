@@ -855,13 +855,9 @@ class ChordTrainer:
                                     # Sequence complete! Reset to start and repeat
                                     print("Sequence complete! Starting over...")
                                     self.current_chord_index = 0
-                                    self.display_sequence_complete()
-                                    await asyncio.sleep(2)
-                                    # Show first target again
-                                    self.display_target_chord()
-                                else:
-                                    # Show next target
-                                    self.display_target_chord()
+                                
+                                # Show next target (or first target if looping)
+                                self.display_target_chord()
                             else:
                                 # Wrong - show what was played
                                 print(f"Wrong! Not enough matching notes")
