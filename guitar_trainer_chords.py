@@ -24,18 +24,84 @@ OPEN_STRING_NOTES = [64, 59, 55, 50, 45, 40]  # Strings 1-6
 
 # MIDI notes that make up each chord (for detection)
 # These are the notes you want to hear when the chord is played
+# All 6 strings represented (String order: E4=64, B=59, G=55, D=50, A=45, E2=40)
+# CHORD_MIDI_NOTES = {
+#     'C': [64, 60, 55, 52, 48, 40],    # E4, C4, G3, E3, C3, E2 (strings 1-6: play, fret3, open, fret1, fret3, open)
+#     'G': [43, 47, 50, 55, 59, 67],    # G4, B3, G3, D3, B2, G2 (strings 1-6: fret3, open, open, open, fret2, fret3)
+#     'D': [66, 62, 57, 50, 45, 40],    # F#4, D4, A3, D3, A2, E2 (strings 1-6: fret2, fret3, fret2, open, open, open)
+#     'A': [64, 60, 57, 52, 49, 45],    # E4, C#4, A3, E3, C#3, A2 (strings 1-6: open, fret2, open, fret2, fret4, open)
+#     'E': [64, 59, 56, 52, 47, 44],    # E4, B3, G#3, E3, B2, G#2 (strings 1-6: open, open, fret1, fret2, fret2, fret4)
+#     'F': [65, 60, 57, 53, 48, 45],    # F4, C4, A3, F3, C3, A2 (strings 1-6: fret1, fret1, fret2, fret3, fret3, open)
+#     'Am': [64, 60, 57, 50, 45, 40],   # E4, C4, A3, E3, C3, A2 (strings 1-6: open, fret1, open, fret2, fret3, open)
+#     'Em': [64, 59, 55, 52, 47, 40],   # E4, B3, G3, E3, B2, E2 (strings 1-6: open, open, open, fret2, fret2, open)
+#     'Dm': [64, 62, 57, 53, 50, 40],   # E4, D4, A3, F3, D3, E2 (strings 1-6: open, fret3, open, fret3, open, open)
+#     'Bdim': [59, 56, 53, 50, 47, 40], # B3, G#3, F3, D3, B2, E2 (strings 1-6: open, fret1, fret3, open, fret2, open)
+# }
+
 CHORD_MIDI_NOTES = {
-    'C': [48, 52, 55, 60, 64],    # C3, E3, G3, C4, E4
-    'G': [43, 47, 50, 55, 59, 67],  # G2, B2, D3, G3, B3, G4
-    'D': [50, 54, 57, 62, 66],  # D3, F#3, A3, D4, F#4
-    'A': [45, 49, 52, 57, 64],  # A2, C#3, E3, A3, E4
-    'E': [40, 44, 47, 52, 56, 64],  # E2, G#2, B2, E3, G#3, E4
-    'F': [41, 45, 48, 53, 57, 65],  # F2, A2, C3, F3, A3, F4
-    'Am': [45, 48, 52, 57, 60], # A2, C3, E3, A3, C4
-    'Em': [40, 43, 47, 52, 55, 64], # E2, G2, B2, E3, G3, E4
-    'Dm': [50, 53, 57, 62, 65], # D3, F3, A3, D4, F4
-    'Bdim': [47, 50, 53, 59],   # B2, D3, F3, B3 (B diminished: B-D-F)
+    'A':   [64, 61, 57, 52, 45, 40],   # E4, C#4, A3, E3, A2, E2
+    'Am':  [64, 60, 57, 52, 45, 40],   # E4, C4, A3, E3, A2, E2
+    'A7':  [64, 59, 57, 52, 45, 40],   # E4, B3, A3, E3, A2, E2
+
+    'B':   [64, 59, 56, 52, 47, 40],   # E4, B3, G#3, E3, B2, E2
+    'Bm':  [64, 59, 55, 52, 47, 40],   # E4, B3, G3, E3, B2, E2
+    'B7':  [64, 59, 56, 52, 47, 40],   # E4, B3, G#3, E3, B2, E2
+
+    'C':   [64, 60, 55, 52, 48, 40],   # E4, C4, G3, E3, C3, E2
+    'Cm':  [64, 60, 55, 52, 48, 40],   # E4, C4, G3, E3, C3, E2
+    'C7':  [64, 60, 55, 53, 48, 40],   # E4, C4, G3, F3, C3, E2
+
+    'D':   [66, 62, 57, 50, 45, 40],   # F#4, D4, A3, D3, A2, E2
+    'Dm':  [65, 62, 57, 50, 45, 40],   # F4, D4, A3, D3, A2, E2
+    'D7':  [64, 62, 57, 50, 45, 40],   # E4, D4, A3, D3, A2, E2
+
+    'E':   [64, 59, 56, 52, 47, 40],   # E4, B3, G#3, E3, B2, E2
+    'Em':  [64, 59, 55, 52, 47, 40],   # E4, B3, G3, E3, B2, E2
+    'E7':  [64, 59, 55, 52, 47, 40],   # E4, B3, G3, E3, B2, E2
+
+    'F':   [64, 59, 57, 53, 48, 41],   # F4, C4, A3, F3, C3, F2
+    'Fm':  [64, 60, 56, 53, 48, 41],   # E4, C4, G#3, F3, C3, F2
+    'F7':  [64, 60, 57, 53, 48, 41],   # E4, C4, A3, F3, C3, F2
+
+    'G':   [67, 59, 55, 50, 47, 43],   # G4, B3, G3, D3, B2, G2
+    'Gm':  [67, 59, 55, 50, 47, 43],   # G4, B3, G3, D3, B2, G2
+    'G7':  [65, 59, 55, 50, 47, 43],   # F4, B3, G3, D3, B2, G2
 }
+
+
+
+CHORD_MIDI_NOTES_FULL = {
+    'A':   [64, 61, 57, 52, 45, None],   # E4, C#4, A3, E3, A2
+    'Am':  [64, 60, 57, 52, 45, None],   # E4, C4, A3, E3, A2
+    'A7':  [64, 59, 57, 52, 45, None],   # E4, B3, A3, E3, A2
+
+    'B':   [64, 59, 56, 52, 47, None],   # E4, B3, G#3, E3, B2
+    'Bm':  [64, 59, 55, 52, 47, None],   # E4, B3, G3, E3, B2
+    'B7':  [64, 59, 56, 52, 47, None],   # E4, B3, G#3, E3, B2
+
+    'C':   [64, 60, 55, 52, 48, None],   # E4, C4, G3, E3, C3
+    'Cm':  [64, 60, 55, 52, 48, None],   # E4, C4, G3, E3, C3
+    'C7':  [64, 60, 55, 53, 48, None],   # E4, C4, G3, F3, C3
+
+    'D':   [66, 62, 57, 50, None, None], # F#4, D4, A3, D3
+    'Dm':  [65, 62, 57, 50, None, None], # F4, D4, A3, D3
+    'D7':  [64, 62, 57, 50, None, None], # E4, D4, A3, D3
+
+    'E':   [64, 59, 56, 52, 47, 40],     # E4, B3, G#3, E3, B2, E2
+    'Em':  [64, 59, 55, 52, 47, 40],     # E4, B3, G3, E3, B2, E2
+    'E7':  [64, 59, 55, 52, 47, 40],     # E4, B3, G3, E3, B2, E2
+
+    'F':   [65, 60, 57, 53, 48, 41],     # F4, C4, A3, F3, C3, F2
+    'Fm':  [64, 60, 56, 53, 48, 41],     # E4, C4, G#3, F3, C3, F2
+    'F7':  [64, 60, 57, 53, 48, 41],     # E4, C4, A3, F3, C3, F2
+
+    'G':   [67, 59, 55, 50, 47, 43],     # G4, B3, G3, D3, B2, G2
+    'Gm':  [67, 59, 55, 50, 47, 43],     # G4, B3, G3, D3, B2, G2
+    'G7':  [65, 59, 55, 50, 47, 43],     # F4, B3, G3, D3, B2, G2
+}
+
+
+
 
 # Map each MIDI note to string number (1-6) for frets 0-4
 # If a note appears on multiple strings, store the lowest fret position (highest string number)
@@ -68,16 +134,16 @@ def generate_chord_shape(chord_name):
     midi_notes = CHORD_MIDI_NOTES[chord_name]
     shape = []
     
-    # For each string (6 to 1), find if any chord note can be played on it
+    # For each string (6 to 1), find the best fret position (prefer lowest fret)
     for string_num in range(6, 0, -1):
         found_fret = None
         
-        # Try each note in the chord
+        # Try each note in the chord and find the lowest fret position
         for note in midi_notes:
             fret = midi_to_fret_position(note, string_num)
             if fret is not None:
-                found_fret = fret
-                break  # Use first matching note
+                if found_fret is None or fret < found_fret:
+                    found_fret = fret
         
         if found_fret is not None:
             shape.append((string_num, found_fret))
@@ -91,6 +157,8 @@ def generate_chord_shape(chord_name):
 CHORD_SHAPES = {}
 for chord_name in CHORD_MIDI_NOTES.keys():
     CHORD_SHAPES[chord_name] = generate_chord_shape(chord_name)
+    if chord_name == 'G':
+        print(f"Generated G chord shape: {CHORD_SHAPES[chord_name]}")
 
 def get_chord_shape(chord_name):
     """Get chord fingering positions"""
@@ -158,8 +226,10 @@ class ChordTrainer:
         self.current_chord_index = 0
         self.sequence_mode = len(self.chord_sequence) > 0
         
-        # Track played notes for chord detection
-        self.played_notes = set()  # Currently held notes
+        # Track played notes - array of 6 strings, each stores the note played (or None)
+        # Will keep the highest note (lowest fret) for each string
+        # Index 0-5 for strings 6-1 (thick to thin)
+        self.played_notes = [None] * 6  # Position 0=string 6, position 5=string 1
         self.last_detected_chord = None
         
         # Clear screen
@@ -269,10 +339,12 @@ class ChordTrainer:
         fret_width = 40      # Was 30, now 40
         
         # Draw 6 strings (horizontal lines) - thicker, with optional color coding
+        # String 1 (high E) at top, String 6 (low E) at bottom - player's view
         for i in range(6):
             y = start_y + (i * string_spacing)
-            # Use color from string_colors if provided, otherwise white
-            string_color = string_colors[i] if string_colors else self.COLOR_WHITE
+            # String 1 at top (i=0), string 6 at bottom (i=5)
+            string_index = i  # Maps i=0->string 1, i=5->string 6
+            string_color = string_colors[string_index] if string_colors else self.COLOR_WHITE
             # Draw thicker lines
             self.tft.hline(start_x, y, 160, string_color)
             self.tft.hline(start_x, y+1, 160, string_color)
@@ -284,14 +356,16 @@ class ChordTrainer:
             self.tft.vline(x, start_y, string_spacing * 5, self.COLOR_WHITE)
             self.tft.vline(x+1, start_y, string_spacing * 5, self.COLOR_WHITE)
         
-        # Draw fret numbers - larger spacing
-        for i in range(4):
-            x = start_x + (i * fret_width) + fret_width // 2 - 4
+        # Draw fret numbers - larger spacing (1-4, not 0)
+        for i in range(1, 5):
+            x = start_x + (i * fret_width) - (fret_width // 2) - 4
             y = start_y + string_spacing * 5 + 8
-            self.tft.text(str(i) if i > 0 else "0", x, y, self.COLOR_WHITE)
+            self.tft.text(str(i), x, y, self.COLOR_WHITE)
         
         # Draw finger positions for each string - LARGER markers
+        # string_num 1=top, 6=bottom (player's view)
         for string_num, fret_num in chord_shape:
+            # String 1 at top (y=0), string 6 at bottom (y=5)
             string_y = start_y + ((string_num - 1) * string_spacing)
             
             if fret_num < 0:
@@ -303,9 +377,9 @@ class ChordTrainer:
             else:
                 # Fretted note - draw LARGER filled square on fretboard
                 fret_x = start_x + (fret_num * fret_width) - (fret_width // 2)
-                self.tft.fill_rect(fret_x - 5, string_y - 5, 10, 10, highlight_color)
+                self.tft.fill_rect(fret_x - 5, string_y - 5, 11, 11, highlight_color)
                 fret_x = start_x + (fret_num * fret_width) - (fret_width // 2)
-                self.tft.fill_rect(fret_x - 3, string_y - 3, 6, 6, highlight_color)
+                self.tft.fill_rect(fret_x - 3, string_y - 3, 7, 7, highlight_color)
     
     def draw_played_notes_overlay(self, played_notes):
         """Draw red dots over the fretboard showing where user played"""
@@ -336,17 +410,18 @@ class ChordTrainer:
                             best_fret = fret_num
             
             # Draw the red marker on the best string
-            if best_string is not None:
+            if best_string is not None and best_fret is not None:
                 #print(f"Drawing note {note} on string {best_string}, fret {best_fret}")
+                # String 1 at top (y=0), string 6 at bottom (y=5)
                 string_y = start_y + ((best_string - 1) * string_spacing)
                 
                 if best_fret == 0:
                     # Open string - draw red O
                     self.tft.text("O", start_x - 18, string_y - 4, self.COLOR_RED)
                 else:
-                    # Fretted note - draw smaller red square (4x4 instead of 10x10)
+                    # Fretted note - draw smaller red square (6x6)
                     fret_x = start_x + (best_fret * fret_width) - (fret_width // 2)
-                    self.tft.fill_rect(fret_x - 2, string_y - 2, 4, 4, self.COLOR_RED)
+                    self.tft.fill_rect(fret_x - 3, string_y - 3, 6, 6, self.COLOR_RED)
             else:
                 print(f"Note {note} not within frets 0-4 on any string")
     
@@ -584,6 +659,23 @@ class ChordTrainer:
         started = False
         last_string = 0
         up = False
+        timeout_task = None  # Track the timeout task
+        
+        async def timeout_handler():
+            """Handle timeout - wait for timeout period then reset"""
+            await asyncio.sleep_ms(strum_timeout_ms)
+            print("Timeout! Resetting strum...")
+            nonlocal started, notes_hit, timeout_task
+            started = False
+            notes_hit = False
+            self.played_notes = [None] * 6
+            timeout_task = None
+            
+            # Redisplay clean target
+            if self.sequence_mode:
+                target_chord = self.chord_sequence[self.current_chord_index]
+                self.update_live_display(target_chord, set(), 0.0)
+        
         try:
             while self.connected:
                
@@ -596,27 +688,38 @@ class ChordTrainer:
                 if msg:
                     if msg[0] == 'note_on':
                         note = msg[1]
-
-                        string_n = STRING_NUMBER.get(note)
-                        if string_n is None:
-                            print(f"WARNING: Note {note} not in STRING_NUMBER mapping!")
-                        string_num = string_n - 1 if string_n else 0
-                        print(f"Note {note} -> String {string_num + 1}")
-
-                        if note == last_note:
-                            continue
-
-                        self.played_notes.add(note)
-
-                        print(f"Added note {note}, now have: {sorted(self.played_notes)}")
-
+                        print(f"Note On: {note}")
+                        
+                        # Check time difference FIRST before processing
                         if utime.ticks_diff(utime.ticks_ms(), time_last_chord) > 500:
                             print("Resetting due to time difference")
                             started = False
                             notes_hit = False
-                            self.played_notes = set()
+                            self.played_notes = [None] * 6
+                            last_note = None  # Clear last_note on reset
 
                         time_last_chord = utime.ticks_ms()
+                        
+                        string_n = STRING_NUMBER.get(note)
+                        if string_n is None:
+                            print(f"WARNING: Note {note} not in STRING_NUMBER mapping!")
+                        # Reverse array: string 6 at index 0, string 1 at index 5
+                        string_num = (6 - string_n) if string_n else 0
+                        print(f"Note {note} -> String {string_n}, array index {string_num}")
+
+                        if note == last_note:
+                            continue
+
+                        # Store note on the string, replacing if it's lower (higher fret)
+                        current_note = self.played_notes[string_num]
+                        if current_note is None or note > current_note:
+                            self.played_notes[string_num] = note
+                            print(f"String {string_num + 1}: set to note {note}")
+                        else:
+                            print(f"String {string_num + 1}: kept {current_note} (ignoring {note})")
+
+                        print(f"Current strings: {self.played_notes}")
+
                         last_note = note
 
                         if not started: 
@@ -628,13 +731,22 @@ class ChordTrainer:
                                     up = False       
                                 else:
                                     up = True
+                                
+                                # Cancel any existing timeout task
+                                if timeout_task is not None:
+                                    timeout_task.cancel()
+                                
+                                # Start new timeout task
+                                timeout_task = asyncio.create_task(timeout_handler())
                         
                         # Update display in real-time as notes are played
                         if started and self.sequence_mode:
                             target_chord = self.chord_sequence[self.current_chord_index]
                             elapsed = utime.ticks_diff(utime.ticks_ms(), strum_start_time)
                             progress = min(1.0, elapsed / strum_timeout_ms)
-                            self.update_live_display(target_chord, self.played_notes, progress)
+                            # Convert array to set for display (filter out None values)
+                            played_set = set(n for n in self.played_notes if n is not None)
+                            self.update_live_display(target_chord, played_set, progress)
                         
                         if not started:
                             continue
@@ -646,12 +758,20 @@ class ChordTrainer:
                                 started = False
                                 up = False
                                 notes_hit = True
+                                # Cancel timeout since strum completed
+                                if timeout_task is not None:
+                                    timeout_task.cancel()
+                                    timeout_task = None
                         else:
                             if string_num == 0:
                                 print("Strum complete (reached string 1)! -------------------------------------------------------------------")
                                 started = False
                                 up = True
-                                notes_hit = True  
+                                notes_hit = True
+                                # Cancel timeout since strum completed
+                                if timeout_task is not None:
+                                    timeout_task.cancel()
+                                    timeout_task = None  
 
                         last_string = string_num
                         
@@ -662,12 +782,13 @@ class ChordTrainer:
                         
                         print("All strings played! -------------------------------------------------------------------")
 
-                        # Capture the played notes
-                        played_notes_copy = set(self.played_notes)
+                        # Capture the played notes (convert array to set, filter out None)
+                        played_notes_copy = set(n for n in self.played_notes if n is not None)
                         
                         print(f"Played notes: {sorted(played_notes_copy)}")
+                        print(f"String array: {self.played_notes}")
 
-                        if self.sequence_mode:
+                        if True or self.sequence_mode:
                             target_chord = self.chord_sequence[self.current_chord_index]
                             expected_notes = set(CHORD_MIDI_NOTES.get(target_chord, []))
                             print(f"Target chord: {target_chord}, Expected notes: {sorted(expected_notes)}")
@@ -715,7 +836,7 @@ class ChordTrainer:
                                 await asyncio.sleep_ms(2000)
                                 
                                 # Clear played notes for next attempt
-                                self.played_notes.clear()
+                                self.played_notes = [None] * 6
                                 
                                 # Redisplay the target chord for next attempt
                                 self.update_live_display(target_chord, set(), 0.0)
@@ -725,6 +846,11 @@ class ChordTrainer:
                         
                         # ALWAYS reset notes_hit after processing
                         notes_hit = [False, False, False, False, False, False]
+                        last_note = None  # Clear last_note for next attempt
+                        # Cancel timeout task if still running
+                        if timeout_task is not None:
+                            timeout_task.cancel()
+                            timeout_task = None
                         print("Reset notes_hit for next attempt")
                     
                 
