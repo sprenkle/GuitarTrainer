@@ -66,9 +66,27 @@ CHORD_MIDI_NOTES = {
     'G':   [67, 59, 55, 50, 47, 43],   # G4, B3, G3, D3, B2, G2
     'Gm':  [67, 59, 55, 50, 47, 43],   # G4, B3, G3, D3, B2, G2
     'G7':  [65, 59, 55, 50, 47, 43],   # F4, B3, G3, D3, B2, G2
+    'D6/9':  [64, 59, 55, 50, 47, 42], 
 }
 
+# Practice options for menu
+PRACTICE_OPTIONS = [
+    ('Simple 3', ['C', 'G', 'D']),
+    ('Classic 4', ['C', 'G', 'Am', 'Em']),
+    ('All Basic', ['C', 'G', 'D', 'A', 'E', 'Am', 'Em', 'Dm']),
+    ('Major Chords', ['C', 'D', 'E', 'F', 'G', 'A']),
+    ('Horse With NN', ['Em', 'D6/9']),
+    ('Power Practice', ['E', 'A', 'D', 'G']),
+]
 
+# Menu selection notes (22nd fret)
+# String 1 (high E): 64 + 22 = 86
+# String 2 (B): 59 + 22 = 81
+# String 3 (G): 55 + 22 = 77
+# String 4 (D): 50 + 22 = 72
+# String 5 (A): 45 + 22 = 67
+# String 6 (low E): 40 + 22 = 62
+SELECTION_NOTES = [86, 81, 77, 72, 67, 62]
 
 CHORD_MIDI_NOTES_FULL = {
     'A':   [64, 61, 57, 52, 45, None],   # E4, C#4, A3, E3, A2
@@ -98,6 +116,7 @@ CHORD_MIDI_NOTES_FULL = {
     'G':   [67, 59, 55, 50, 47, 43],     # G4, B3, G3, D3, B2, G2
     'Gm':  [67, 59, 55, 50, 47, 43],     # G4, B3, G3, D3, B2, G2
     'G7':  [65, 59, 55, 50, 47, 43],     # F4, B3, G3, D3, B2, G2
+    'D6/9':  [64, 59, 55, 52, 47, 40], # F#4, D4, A3, B4, D3
 }
 
 
@@ -648,9 +667,6 @@ class ChordTrainer:
         
         print("Listening for MIDI...")
         
-        # Menu selection notes (22nd fret)
-        selection_notes = [86, 81, 77, 72, 67, 62]
-        
         # Show first target if in sequence mode
         if self.sequence_mode:
             self.display_target_chord()
@@ -658,7 +674,7 @@ class ChordTrainer:
         last_note = None
         time_last_chord = 0
         strum_start_time = 0  # Track when strum started
-        strum_timeout_ms = 1500  # 1.5 second timeout
+        strum_timeout_ms = 750  # 0.75 second timeout
         started = False
         last_string = 0
         up = False
@@ -694,19 +710,11 @@ class ChordTrainer:
                         print(f"Note On: {note}")
                         
                         # Check if it's a menu selection note (22nd fret) - switch practice mode
-                        print(f"Checking if {note} in selection_notes {selection_notes}: {note in selection_notes}")
-                        if note in selection_notes:
-                            selected_index = selection_notes.index(note)
-                            practice_options = [
-                                ('Simple 3', ['C', 'G', 'D']),
-                                ('Classic 4', ['C', 'G', 'Am', 'Em']),
-                                ('All Basic', ['C', 'G', 'D', 'A', 'E', 'Am', 'Em', 'Dm']),
-                                ('Major Chords', ['C', 'D', 'E', 'F', 'G', 'A']),
-                                ('Minor Chords', ['Am', 'Dm', 'Em']),
-                                ('Power Practice', ['E', 'A', 'D', 'G']),
-                            ]
-                            if selected_index < len(practice_options):
-                                name, new_sequence = practice_options[selected_index]
+                        print(f"Checking if {note} in SELECTION_NOTES {SELECTION_NOTES}: {note in SELECTION_NOTES}")
+                        if note in SELECTION_NOTES:
+                            selected_index = SELECTION_NOTES.index(note)
+                            if selected_index < len(PRACTICE_OPTIONS):
+                                name, new_sequence = PRACTICE_OPTIONS[selected_index]
                                 print(f"Switching to: {name}")
                                 print(f"New chord sequence: {new_sequence}")
                                 self.chord_sequence = new_sequence
@@ -891,25 +899,6 @@ class ChordTrainer:
     
     async def show_menu_and_wait_for_selection(self):
         """Show practice menu and wait for user to select with 22nd fret note"""
-        # Practice options
-        practice_options = [
-            ('Simple 3', ['C', 'G', 'D']),
-            ('Classic 4', ['C', 'G', 'Am', 'Em']),
-            ('All Basic', ['C', 'G', 'D', 'A', 'E', 'Am', 'Em', 'Dm']),
-            ('Major Chords', ['C', 'D', 'E', 'F', 'G', 'A']),
-            ('Minor Chords', ['Am', 'Dm', 'Em']),
-            ('Power Practice', ['E', 'A', 'D', 'G']),
-        ]
-        
-        # MIDI notes for menu selection - 22nd fret on each string
-        # String 1 (high E): 64 + 22 = 86
-        # String 2 (B): 59 + 22 = 81
-        # String 3 (G): 55 + 22 = 77
-        # String 4 (D): 50 + 22 = 72
-        # String 5 (A): 45 + 22 = 67
-        # String 6 (low E): 40 + 22 = 62
-        selection_notes = [86, 81, 77, 72, 67, 62]
-        
         current_selection = 0
         
         # Display menu
@@ -919,7 +908,7 @@ class ChordTrainer:
         
         # Show options
         y_pos = 50
-        for i, (name, _) in enumerate(practice_options):
+        for i, (name, _) in enumerate(PRACTICE_OPTIONS):
             color = self.COLOR_GREEN if i == current_selection else self.COLOR_WHITE
             marker = ">" if i == current_selection else " "
             self.tft.text(f"{marker}{i+1}. {name}", 30, y_pos, color)
@@ -930,7 +919,7 @@ class ChordTrainer:
         
         print("Menu displayed. Waiting for 22nd fret selection...")
         print("Play 22nd fret on:")
-        for i, (name, _) in enumerate(practice_options):
+        for i, (name, _) in enumerate(PRACTICE_OPTIONS):
             print(f"  String {i+1}: {name}")
         
         # Wait for selection
@@ -943,14 +932,14 @@ class ChordTrainer:
                 print(f"Menu - Note received: {note}")
                 
                 # Check if it's a 22nd fret note
-                if note in selection_notes:
-                    selected_index = selection_notes.index(note)
-                    if selected_index < len(practice_options):
-                        print(f"Selected: {practice_options[selected_index][0]}")
+                if note in SELECTION_NOTES:
+                    selected_index = SELECTION_NOTES.index(note)
+                    if selected_index < len(PRACTICE_OPTIONS):
+                        print(f"Selected: {PRACTICE_OPTIONS[selected_index][0]}")
                         
                         # Flash selection
                         self.tft.fill(self.COLOR_BLACK)
-                        name, chords = practice_options[selected_index]
+                        name, chords = PRACTICE_OPTIONS[selected_index]
                         self.tft.text("Selected:", 80, 100, self.COLOR_GREEN)
                         self.tft.text(name, 85, 120, self.COLOR_YELLOW)
                         self.tft.show()
