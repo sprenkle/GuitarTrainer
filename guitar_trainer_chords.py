@@ -648,9 +648,8 @@ class ChordTrainer:
         
         print("Listening for MIDI...")
         
-        # Menu selection notes (23rd fret) - only first 5 strings
-        # Using 23rd fret to avoid conflicts with chord notes (e.g., G chord uses 67)
-        selection_notes = [87, 82, 78, 73, 68]
+        # Menu selection notes (22nd fret)
+        selection_notes = [86, 81, 77, 72, 67, 62]
         
         # Show first target if in sequence mode
         if self.sequence_mode:
@@ -695,6 +694,7 @@ class ChordTrainer:
                         print(f"Note On: {note}")
                         
                         # Check if it's a menu selection note (22nd fret) - switch practice mode
+                        print(f"Checking if {note} in selection_notes {selection_notes}: {note in selection_notes}")
                         if note in selection_notes:
                             selected_index = selection_notes.index(note)
                             practice_options = [
