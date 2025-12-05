@@ -76,7 +76,7 @@ PRACTICE_OPTIONS = [
     ('All Basic', ['C', 'G', 'D', 'A', 'E', 'Am', 'Em', 'Dm']),
     ('Major Chords', ['C', 'D', 'E', 'F', 'G', 'A']),
     ('Horse With NN', ['Em', 'D6/9']),
-    ('Power Practice', ['E', 'A', 'D', 'G']),
+    ('Metronome', []),  # Empty list signals metronome mode
 ]
 
 # Menu selection notes (22nd fret)
@@ -87,6 +87,9 @@ PRACTICE_OPTIONS = [
 # String 5 (A): 45 + 22 = 67
 # String 6 (low E): 40 + 22 = 62
 SELECTION_NOTES = [86, 81, 77, 72, 67, 62]
+
+# BPM options for metronome
+BPM_OPTIONS = [60, 80, 100, 120, 140, 160]
 
 CHORD_MIDI_NOTES_FULL = {
     'A':   [64, 61, 57, 52, 45, None],   # E4, C#4, A3, E3, A2
@@ -545,6 +548,147 @@ class ChordTrainer:
         
         self.tft.show()
     
+    async def show_bpm_menu(self):
+        """Show BPM selection menu and wait for selection"""
+        current_selection = 0
+        
+        # Display BPM menu
+        self.tft.fill(self.COLOR_BLACK)
+        self.tft.text("Select BPM:", 80, 10, self.COLOR_YELLOW)
+        self.tft.text("Use 22nd fret", 55, 30, self.COLOR_WHITE)
+        
+        # Show BPM options
+        y_pos = 50
+        for i, bpm in enumerate(BPM_OPTIONS):
+            color = self.COLOR_GREEN if i == current_selection else self.COLOR_WHITE
+            marker = ">" if i == current_selection else " "
+            self.tft.text(f"{marker}{i+1}. {bpm} BPM", 50, y_pos, color)
+            y_pos += 20
+        
+        self.tft.text("String 1-6 = opt 1-6", 30, y_pos + 10, self.COLOR_ORANGE)
+        self.tft.show()
+        
+        print("BPM menu displayed. Waiting for 22nd fret selection...")
+        print("Play 22nd fret on:")
+        for i, bpm in enumerate(BPM_OPTIONS):
+            print(f"  String {i+1}: {bpm} BPM")
+        
+        # Wait for selection
+        while True:
+            data = await self.midi_characteristic.notified()
+            msg = self.parse_midi_message(data)
+            
+            if msg and msg[0] == 'note_on':
+                note = msg[1]
+                print(f"BPM Menu - Note received: {note}")
+                
+                # Check if it's a 22nd fret note
+                if note in SELECTION_NOTES:
+                    selected_index = SELECTION_NOTES.index(note)
+                    if selected_index < len(BPM_OPTIONS):
+                        selected_bpm = BPM_OPTIONS[selected_index]
+                        print(f"Selected: {selected_bpm} BPM")
+                        
+                        # Flash selection
+                        self.tft.fill(self.COLOR_BLACK)
+                        self.tft.text("Selected:", 80, 100, self.COLOR_GREEN)
+                        self.tft.text(f"{selected_bpm} BPM", 85, 120, self.COLOR_YELLOW)
+                        self.tft.show()
+                        await asyncio.sleep_ms(500)
+                        
+                        return selected_bpm
+    
+    async def run_metronome(self, bpm=60):
+        """Run visual metronome mode
+        
+        Args:
+            bpm: Beats per minute (default 60)
+        
+        Returns:
+            'menu' if returning to menu, 'practice' if switching to practice mode
+        """
+        beat_interval_ms = int(60000 / bpm)  # Convert BPM to milliseconds
+        beat_num = 0
+        last_beat_time = utime.ticks_ms()
+        
+        print(f"Metronome mode: {bpm} BPM")
+        print("Play 22nd fret to switch mode or return to menu")
+        
+        # Create buffer for MIDI messages
+        midi_buffer = []
+        running = True
+        
+        async def midi_listener():
+            """Background task to listen for MIDI"""
+            while running:
+                try:
+                    data = await self.midi_characteristic.notified()
+                    msg = self.parse_midi_message(data)
+                    if msg and msg[0] == 'note_on':
+                        midi_buffer.append(msg[1])
+                except Exception as e:
+                    await asyncio.sleep_ms(10)
+        
+        # Start MIDI listener in background
+        listener_task = asyncio.create_task(midi_listener())
+        
+        try:
+            while self.connected:
+                # Check for menu selection notes
+                if midi_buffer:
+                    note = midi_buffer.pop(0)
+                    print(f"Metronome - Note received: {note}")
+                    
+                    # Check if it's a menu selection note
+                    if note in SELECTION_NOTES:
+                        selected_index = SELECTION_NOTES.index(note)
+                        if selected_index < len(PRACTICE_OPTIONS):
+                            name, new_sequence = PRACTICE_OPTIONS[selected_index]
+                            print(f"Switching from metronome to: {name}")
+                            self.chord_sequence = new_sequence
+                            self.current_chord_index = 0
+                            self.sequence_mode = len(new_sequence) > 0
+                            running = False
+                            listener_task.cancel()
+                            return 'practice' if self.sequence_mode else 'menu'
+                
+                # Check if time for next beat
+                current_time = utime.ticks_ms()
+                time_since_beat = utime.ticks_diff(current_time, last_beat_time)
+                
+                if time_since_beat >= beat_interval_ms:
+                    # Time for next beat
+                    beat_num = (beat_num % 4) + 1  # Count 1-4
+                    last_beat_time = current_time
+                    
+                    # Draw beat indicator
+                    self.tft.fill(self.COLOR_BLACK)
+                    
+                    # Large beat number
+                    self.draw_large_text(str(beat_num), 100, 80, self.COLOR_GREEN if beat_num == 1 else self.COLOR_WHITE)
+                    
+                    # Show BPM
+                    self.tft.text(f"{bpm} BPM", 90, 30, self.COLOR_YELLOW)
+                    self.tft.text("22nd fret string", 55, 180, self.COLOR_ORANGE)
+                    self.tft.text("to change mode", 55, 200, self.COLOR_ORANGE)
+                    
+                    # Draw beat circles at bottom
+                    y_pos = 150
+                    for i in range(1, 5):
+                        x_pos = 50 + (i - 1) * 40
+                        color = self.COLOR_GREEN if i == beat_num else self.COLOR_WHITE
+                        # Draw circle (approximate with filled rect)
+                        self.tft.fill_rect(x_pos, y_pos, 20, 20, color)
+                    
+                    self.tft.show()
+                
+                # Small sleep to yield to other tasks
+                await asyncio.sleep_ms(10)
+                
+        finally:
+            running = False
+            listener_task.cancel()
+    
     def parse_midi_message(self, data):
         """Parse BLE MIDI message"""
         if len(data) < 3:
@@ -717,6 +861,15 @@ class ChordTrainer:
                                 name, new_sequence = PRACTICE_OPTIONS[selected_index]
                                 print(f"Switching to: {name}")
                                 print(f"New chord sequence: {new_sequence}")
+                                
+                                # Check if switching to metronome (empty sequence)
+                                if len(new_sequence) == 0:
+                                    print("Switching to metronome mode")
+                                    self.chord_sequence = new_sequence
+                                    self.sequence_mode = False
+                                    return  # Exit handle_midi to allow metronome to start
+                                
+                                # Regular practice mode switch
                                 self.chord_sequence = new_sequence
                                 self.current_chord_index = 0
                                 print(f"Current chord index: {self.current_chord_index}")
@@ -965,8 +1118,33 @@ class ChordTrainer:
         print("Play 22nd fret on strings 1-6 anytime to switch practice mode")
         
         try:
-            await self.handle_midi()
-            # handle_midi runs continuously, switching modes as needed
+            while True:  # Loop to allow switching between practice and metronome
+                # Check if metronome mode
+                if len(self.chord_sequence) == 0:
+                    print("Metronome mode selected")
+                    # Show BPM selection menu
+                    selected_bpm = await self.show_bpm_menu()
+                    result = await self.run_metronome(bpm=selected_bpm)
+                    # After metronome exits, check what mode to enter
+                    if result == 'practice' and self.sequence_mode:
+                        # User selected a practice mode from metronome
+                        self.display_target_chord()
+                        await self.handle_midi()
+                        # After handle_midi returns, check if switching to metronome
+                        if len(self.chord_sequence) == 0:
+                            continue  # Loop back to metronome
+                        else:
+                            break  # Exit loop
+                    elif result == 'menu':
+                        # User selected metronome again, show BPM menu again
+                        continue  # Loop back to metronome
+                else:
+                    await self.handle_midi()
+                    # After handle_midi returns, check if switching to metronome
+                    if len(self.chord_sequence) == 0:
+                        continue  # Loop back to metronome
+                    else:
+                        break  # Exit loop
         except Exception as e:
             print(f"Error: {e}")
         
