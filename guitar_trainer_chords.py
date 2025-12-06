@@ -4,6 +4,8 @@ import aioble
 import bluetooth
 import network
 import urandom
+import sys
+import select
 from gc9a01_spi_fb import GC9A01_SPI_FB
 from machine import SPI, Pin
 from micropython import const
@@ -251,6 +253,14 @@ class ChordTrainer:
         self.randomize_mode = 'R'  # Default to randomize
         self.current_chord_index = 0
         self.sequence_mode = len(self.chord_sequence) > 0
+        
+        # Custom uploaded chord lists (stored in RAM)
+        self.custom_chord_lists = []
+        
+        # USB Serial buffer for receiving chord lists
+        self.serial_buffer = ""
+        self.serial_task = None  # Background task for serial monitoring
+        self.new_chord_list_uploaded = False  # Flag to signal menu refresh
         
         # Track played notes - array of 6 strings, each stores the note played (or None)
         # Will keep the highest note (lowest fret) for each string
@@ -657,6 +667,14 @@ class ChordTrainer:
         
         try:
             while self.connected:
+                # Check if new chord list was uploaded - return to menu
+                if self.new_chord_list_uploaded:
+                    print("[Menu] New chord list uploaded, returning to menu...")
+                    self.new_chord_list_uploaded = False
+                    running = False
+                    listener_task.cancel()
+                    return 'menu'
+                
                 # Check for menu selection notes
                 if midi_buffer:
                     note = midi_buffer.pop(0)
@@ -982,8 +1000,18 @@ class ChordTrainer:
         
         try:
             while self.connected:
-                # Wait for MIDI input
-                data = await self.midi_characteristic.notified()
+                # Check if new chord list was uploaded - return to menu
+                if self.new_chord_list_uploaded:
+                    print("[Menu] New chord list uploaded, returning to menu...")
+                    self.new_chord_list_uploaded = False
+                    return 'menu'
+                
+                # Wait for MIDI input with timeout to check flag periodically
+                try:
+                    data = await asyncio.wait_for(self.midi_characteristic.notified(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue  # Timeout, loop back to check flag
+                    
                 msg = self.parse_midi_message(data)
                 
                 if msg and msg[0] == 'note_on':
@@ -1221,6 +1249,10 @@ class ChordTrainer:
         
         midi_status = data[2]
         
+        # SysEx message (for chord list upload)
+        if midi_status == 0xF0:
+            return self.parse_sysex_message(data)
+        
         # Note On: 0x90-0x9F
         if 0x90 <= midi_status <= 0x9F:
             if len(data) >= 5:
@@ -1239,8 +1271,119 @@ class ChordTrainer:
         
         return None
     
+    def parse_sysex_message(self, data):
+        """Parse SysEx message for chord list upload
+        Format: F0 7D [name_len] [name_bytes] [mode] [chord_count] [chord1_len] [chord1_bytes] ... F7
+        """
+        try:
+            # Skip BLE MIDI header (2 bytes)
+            idx = 2
+            
+            # Check for SysEx start and manufacturer ID
+            if data[idx] != 0xF0 or data[idx + 1] != 0x7D:
+                return None
+            
+            idx += 2
+            
+            # Parse name
+            name_len = data[idx]
+            idx += 1
+            name = bytes(data[idx:idx+name_len]).decode('utf-8')
+            idx += name_len
+            
+            # Parse mode
+            mode = chr(data[idx])
+            idx += 1
+            
+            # Parse chord count
+            chord_count = data[idx]
+            idx += 1
+            
+            # Parse chords
+            chords = []
+            for _ in range(chord_count):
+                chord_len = data[idx]
+                idx += 1
+                chord = bytes(data[idx:idx+chord_len]).decode('utf-8')
+                idx += chord_len
+                chords.append(chord)
+            
+            # Check for SysEx end
+            if data[idx] == 0xF7:
+                return ('chord_list', name, mode, chords)
+            
+        except Exception as e:
+            print(f"Error parsing SysEx: {e}")
+        
+        return None
+    
+    def add_custom_chord_list(self, name, mode, chords):
+        """Add a custom chord list to the practice options"""
+        # Add to custom lists
+        self.custom_chord_lists.append((name, [mode] + chords))
+        print(f"Added custom list: {name} ({mode}) - {chords}")
+        
+        # Show confirmation on screen
+        self.tft.fill(self.COLOR_BLACK)
+        self.tft.text("Chord List Added!", 50, 100, self.COLOR_GREEN)
+        self.tft.text(name, 60, 120, self.COLOR_YELLOW)
+        self.tft.text(f"{len(chords)} chords", 80, 140, self.COLOR_WHITE)
+        self.tft.show()
+    
+    def get_all_practice_options(self):
+        """Get combined list of built-in and custom chord lists"""
+        return PRACTICE_OPTIONS + self.custom_chord_lists
+    
+    async def serial_monitor_task(self):
+        """Background task to continuously monitor serial input"""
+        print("[Serial] Monitor task started")
+        while True:
+            try:
+                # Check if data is available (non-blocking)
+                rlist, _, _ = select.select([sys.stdin], [], [], 0)
+                if rlist:
+                    char = sys.stdin.read(1)
+                    if char:
+                        self.serial_buffer += char
+                        
+                        # Check if we have a complete message (ends with newline)
+                        if '\n' in self.serial_buffer:
+                            message = self.serial_buffer.strip()
+                            self.serial_buffer = ""
+                            
+                            print(f"[Serial] Received: {message}")
+                            
+                            # Parse the message
+                            if message.startswith("CHORD_LIST|"):
+                                try:
+                                    parts = message.split('|')
+                                    if len(parts) >= 4:
+                                        name = parts[1]
+                                        mode = parts[2]
+                                        chords = parts[3].split(',')
+                                        
+                                        # Add the chord list
+                                        self.add_custom_chord_list(name, mode, chords)
+                                        
+                                        # Signal that menu should be refreshed
+                                        self.new_chord_list_uploaded = True
+                                        
+                                        # Send acknowledgment
+                                        print(f"OK: Added '{name}' with {len(chords)} chords")
+                                except Exception as e:
+                                    print(f"[Serial] Error parsing: {e}")
+            except Exception as e:
+                print(f"[Serial] Error: {e}")
+            
+            # Small delay to prevent tight loop
+            await asyncio.sleep_ms(50)
+    
     async def scan_and_connect(self, timeout_ms=30000):
         """Scan for and connect to Aeroband guitar"""
+        # Start serial monitor task
+        if not self.serial_task:
+            self.serial_task = asyncio.create_task(self.serial_monitor_task())
+        
         print("Initializing Bluetooth...")
         
         # Initialize network for BLE
@@ -1366,9 +1509,17 @@ class ChordTrainer:
         
         try:
             while self.connected:
-               
-                # Wait for MIDI data
-                data = await self.midi_characteristic.notified()
+                # Check if new chord list was uploaded - return to menu
+                if self.new_chord_list_uploaded:
+                    print("[Menu] New chord list uploaded, returning to menu...")
+                    self.new_chord_list_uploaded = False
+                    return 'menu'
+                
+                # Wait for MIDI data with timeout to check flag periodically
+                try:
+                    data = await asyncio.wait_for(self.midi_characteristic.notified(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue  # Timeout, loop back to check flag
                 
                 # Parse message
                 msg = self.parse_midi_message(data)
@@ -1609,51 +1760,78 @@ class ChordTrainer:
         """Show practice menu and wait for user to select with 22nd fret note"""
         current_selection = 0
         
+        # Get all options (built-in + custom)
+        all_options = self.get_all_practice_options()
+        
         # Display menu
         self.tft.fill(self.COLOR_BLACK)
         self.tft.text("Select Practice:", 50, 10, self.COLOR_YELLOW)
         self.tft.text("Use 22nd fret", 55, 30, self.COLOR_WHITE)
         
-        # Show options
+        # Show options (limit to first 6 for display)
         y_pos = 50
-        for i, (name, _) in enumerate(PRACTICE_OPTIONS):
+        for i, (name, _) in enumerate(all_options[:6]):
             color = self.COLOR_GREEN if i == current_selection else self.COLOR_WHITE
             marker = ">" if i == current_selection else " "
             self.tft.text(f"{marker}{i+1}. {name}", 30, y_pos, color)
             y_pos += 20
+        
+        if len(all_options) > 6:
+            self.tft.text(f"+{len(all_options)-6} more...", 40, y_pos, self.COLOR_ORANGE)
         
         self.tft.text("String 1-6 = opt 1-6", 30, y_pos + 10, self.COLOR_ORANGE)
         self.tft.show()
         
         print("Menu displayed. Waiting for 22nd fret selection...")
         print("Play 22nd fret on:")
-        for i, (name, _) in enumerate(PRACTICE_OPTIONS):
+        for i, (name, _) in enumerate(all_options):
             print(f"  String {i+1}: {name}")
         
         # Wait for selection
         while True:
-            data = await self.midi_characteristic.notified()
+            # Check if new chord list was uploaded - refresh menu
+            if self.new_chord_list_uploaded:
+                print("[Menu] New chord list uploaded, refreshing menu...")
+                self.new_chord_list_uploaded = False
+                # Refresh menu to show new list
+                return await self.show_menu_and_wait_for_selection()
+            
+            # Wait for MIDI data with timeout to allow periodic checks
+            try:
+                data = await asyncio.wait_for(self.midi_characteristic.notified(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue  # Timeout, loop back
+                
             msg = self.parse_midi_message(data)
             
-            if msg and msg[0] == 'note_on':
-                note = msg[1]
-                print(f"Menu - Note received: {note}")
+            if msg:
+                # Handle chord list upload
+                if msg[0] == 'chord_list':
+                    _, name, mode, chords = msg
+                    self.add_custom_chord_list(name, mode, chords)
+                    await asyncio.sleep_ms(2000)
+                    # Refresh menu to show new list
+                    return await self.show_menu_and_wait_for_selection()
                 
-                # Check if it's a 22nd fret note
-                if note in SELECTION_NOTES:
-                    selected_index = SELECTION_NOTES.index(note)
-                    if selected_index < len(PRACTICE_OPTIONS):
-                        print(f"Selected: {PRACTICE_OPTIONS[selected_index][0]}")
-                        
-                        # Flash selection
-                        self.tft.fill(self.COLOR_BLACK)
-                        name, chords = PRACTICE_OPTIONS[selected_index]
-                        self.tft.text("Selected:", 80, 100, self.COLOR_GREEN)
-                        self.tft.text(name, 85, 120, self.COLOR_YELLOW)
-                        self.tft.show()
-                        await asyncio.sleep_ms(500)
-                        
-                        return chords
+                elif msg[0] == 'note_on':
+                    note = msg[1]
+                    print(f"Menu - Note received: {note}")
+                    
+                    # Check if it's a 22nd fret note
+                    if note in SELECTION_NOTES:
+                        selected_index = SELECTION_NOTES.index(note)
+                        if selected_index < len(all_options):
+                            print(f"Selected: {all_options[selected_index][0]}")
+                            
+                            # Flash selection
+                            self.tft.fill(self.COLOR_BLACK)
+                            name, chords = all_options[selected_index]
+                            self.tft.text("Selected:", 80, 100, self.COLOR_GREEN)
+                            self.tft.text(name, 85, 120, self.COLOR_YELLOW)
+                            self.tft.show()
+                            await asyncio.sleep_ms(500)
+                            
+                            return chords
             
             #await asyncio.sleep_ms(10)
     
@@ -1663,79 +1841,88 @@ class ChordTrainer:
             print("Failed to connect")
             return
         
-        # Show menu once and wait for initial selection
-        print("Showing practice menu...")
-        selected_chords = await self.show_menu_and_wait_for_selection()
-        
-        # Set the chord sequence - extract mode if present
-        if len(selected_chords) > 0 and selected_chords[0] in ['R', 'S']:
-            self.randomize_mode = selected_chords[0]
-            self.chord_sequence = selected_chords[1:]
-        else:
-            # Empty or special mode (metronome, strum)
-            self.chord_sequence = selected_chords
-        
-        self.sequence_mode = True  # Always in sequence mode now
-        self.current_chord_index = 0
-        
-        print(f"Starting practice: {len(self.chord_sequence)} chords")
-        print("Starting MIDI handler...")
-        print("Play 22nd fret on strings 1-6 anytime to switch practice mode")
-        
-        try:
-            while True:  # Loop to allow switching between practice and metronome
-                # Check if metronome mode
-                if len(self.chord_sequence) == 0:
-                    print("Metronome mode selected")
-                    # Show BPM selection menu
-                    selected_bpm = await self.show_bpm_menu()
-                    result = await self.run_metronome(bpm=selected_bpm)
-                    # After metronome exits, check what mode to enter
-                    if result == 'practice' and self.sequence_mode:
-                        # User selected a practice mode from metronome
-                        self.display_target_chord()
-                        await self.handle_midi()
-                        # After handle_midi returns, check if switching to metronome
-                        if len(self.chord_sequence) == 0:
-                            continue  # Loop back to metronome
-                        elif self.chord_sequence == ['STRUM']:
-                            continue  # Loop back to strum practice
-                        else:
-                            break  # Exit loop
-                    elif result == 'menu':
-                        # User selected metronome again, show BPM menu again
-                        continue  # Loop back to metronome
-                # Check if strum practice mode
-                elif self.chord_sequence == ['STRUM']:
-                    print("Strum Practice mode selected")
-                    # Show BPM selection menu
-                    selected_bpm = await self.show_bpm_menu()
-                    result = await self.run_strum_metronome(bpm=selected_bpm)
-                    # After strum practice exits, check what mode to enter
-                    if result == 'practice' and self.sequence_mode:
-                        # User selected a practice mode from strum practice
-                        self.display_target_chord()
-                        await self.handle_midi()
-                        # After handle_midi returns, check if switching modes
-                        if len(self.chord_sequence) == 0:
-                            continue  # Loop back to metronome
-                        elif self.chord_sequence == ['STRUM']:
-                            continue  # Loop back to strum practice
-                        else:
-                            break  # Exit loop
-                    elif result == 'menu':
-                        continue  # Loop back
-                else:
-                    await self.handle_midi()
-                    # After handle_midi returns, check if switching to metronome
+        # Main loop - show menu when needed
+        while True:
+            # Show menu and wait for selection
+            print("Showing practice menu...")
+            selected_chords = await self.show_menu_and_wait_for_selection()
+            
+            # Set the chord sequence - extract mode if present
+            if len(selected_chords) > 0 and selected_chords[0] in ['R', 'S']:
+                self.randomize_mode = selected_chords[0]
+                self.chord_sequence = selected_chords[1:]
+            else:
+                # Empty or special mode (metronome, strum)
+                self.chord_sequence = selected_chords
+            
+            self.sequence_mode = True  # Always in sequence mode now
+            self.current_chord_index = 0
+            
+            print(f"Starting practice: {len(self.chord_sequence)} chords")
+            print("Starting MIDI handler...")
+            print("Play 22nd fret on strings 1-6 anytime to switch practice mode")
+            
+            # Inner loop to allow switching between practice and metronome
+            result = None
+            try:
+                while True:  # Inner loop for mode switching
+                    # Check if metronome mode
                     if len(self.chord_sequence) == 0:
-                        continue  # Loop back to metronome
+                        print("Metronome mode selected")
+                        # Show BPM selection menu
+                        selected_bpm = await self.show_bpm_menu()
+                        result = await self.run_metronome(bpm=selected_bpm)
+                        # After metronome exits, check what mode to enter
+                        if result == 'menu':
+                            break  # Return to main menu
+                        elif result == 'practice' and self.sequence_mode:
+                            # User selected a practice mode from metronome
+                            self.display_target_chord()
+                            continue_result = await self.handle_midi()
+                            # After handle_midi returns, check if switching to metronome
+                            if continue_result == 'menu':
+                                break  # Return to main menu
+                            elif len(self.chord_sequence) == 0:
+                                continue  # Loop back to metronome
+                            elif self.chord_sequence == ['STRUM']:
+                                continue  # Loop back to strum practice
+                            else:
+                                break  # Exit inner loop
+                    # Check if strum practice mode
+                    elif self.chord_sequence == ['STRUM']:
+                        print("Strum Practice mode selected")
+                        # Show BPM selection menu
+                        selected_bpm = await self.show_bpm_menu()
+                        result = await self.run_strum_metronome(bpm=selected_bpm)
+                        # After strum practice exits, check what mode to enter
+                        if result == 'menu':
+                            break  # Return to main menu
+                        elif result == 'practice' and self.sequence_mode:
+                            # User selected a practice mode from strum practice
+                            self.display_target_chord()
+                            continue_result = await self.handle_midi()
+                            # After handle_midi returns, check if switching modes
+                            if continue_result == 'menu':
+                                break  # Return to main menu
+                            elif len(self.chord_sequence) == 0:
+                                continue  # Loop back to metronome
+                            elif self.chord_sequence == ['STRUM']:
+                                continue  # Loop back to strum practice
+                            else:
+                                break  # Exit inner loop
                     else:
-                        break  # Exit loop
-        except Exception as e:
-            print(f"Error: {e}")
+                        result = await self.handle_midi()
+                        # After handle_midi returns, check result
+                        if result == 'menu':
+                            break  # Return to main menu
+                        elif len(self.chord_sequence) == 0:
+                            continue  # Loop back to metronome
+                        else:
+                            break  # Exit inner loop
+            except Exception as e:
+                print(f"Error: {e}")
         
-        # Disconnect when exiting
+        # Disconnect when exiting (this code is now unreachable but kept for safety)
         if self.connection:
             try:
                 await self.connection.disconnect()
