@@ -680,25 +680,12 @@ class ChordTrainer:
                     note = midi_buffer.pop(0)
                     print(f"Metronome - Note received: {note}")
                     
-                    # Check if it's a menu selection note
+                    # Check if it's a 22nd fret note - return to menu
                     if note in SELECTION_NOTES:
-                        selected_index = SELECTION_NOTES.index(note)
-                        if selected_index < len(PRACTICE_OPTIONS):
-                            name, new_sequence = PRACTICE_OPTIONS[selected_index]
-                            print(f"Switching from metronome to: {name}")
-                            
-                            # Extract mode if present
-                            if len(new_sequence) > 0 and new_sequence[0] in ['R', 'S']:
-                                self.randomize_mode = new_sequence[0]
-                                self.chord_sequence = new_sequence[1:]
-                            else:
-                                self.chord_sequence = new_sequence
-                            
-                            self.current_chord_index = 0
-                            self.sequence_mode = len(self.chord_sequence) > 0
-                            running = False
-                            listener_task.cancel()
-                            return 'practice' if self.sequence_mode else 'menu'
+                        print(f"22nd fret detected - returning to menu...")
+                        running = False
+                        listener_task.cancel()
+                        return 'menu'
                 
                 # Check if time for next beat
                 current_time = utime.ticks_ms()
@@ -1019,31 +1006,12 @@ class ChordTrainer:
                     current_time = utime.ticks_ms()
                     print(f"Strum Practice - Note received: {note}")
                     
-                    # Check if it's a menu selection note
+                    # Check if it's a 22nd fret note - return to menu
                     if note in SELECTION_NOTES:
-                        selected_index = SELECTION_NOTES.index(note)
-                        if selected_index < len(PRACTICE_OPTIONS):
-                            name, new_sequence = PRACTICE_OPTIONS[selected_index]
-                            print(f"Switching from strum practice to: {name}")
-                            
-                            # Extract mode if present
-                            if len(new_sequence) > 0 and new_sequence[0] in ['R', 'S']:
-                                self.randomize_mode = new_sequence[0]
-                                self.chord_sequence = new_sequence[1:]
-                            else:
-                                self.chord_sequence = new_sequence
-                            
-                            self.current_chord_index = 0
-                            self.sequence_mode = len(self.chord_sequence) > 0
-                            
-                            if len(new_sequence) == 0:
-                                return 'menu'
-                            elif new_sequence == ['STRUM']:
-                                continue  # Stay in strum mode
-                            else:
-                                return 'practice'
-                    else:
-                        # Check if enough time has passed since last strum
+                        print(f"22nd fret detected - returning to menu...")
+                        return 'menu'
+                    
+                    # Check if enough time has passed since last strum
                         time_since_last = utime.ticks_diff(current_time, last_strum_time)
                         if time_since_last < strum_debounce_ms:
                             print(f"Debouncing - only {time_since_last}ms since last strum")
@@ -1529,9 +1497,7 @@ class ChordTrainer:
                         note = msg[1]
                         print(f"Note On: {note}")
                         
-                        # Check if it's a menu selection note (22nd fret) - switch practice mode
-                        # Only trigger if it's an isolated note (not part of a chord strum)
-                        print(f"Checking if {note} in SELECTION_NOTES {SELECTION_NOTES}: {note in SELECTION_NOTES}")
+                        # Check if it's a 22nd fret note - return to menu (but only if isolated)
                         if note in SELECTION_NOTES:
                             # Wait a short moment to see if more notes come (indicating a chord strum)
                             await asyncio.sleep_ms(100)
@@ -1539,43 +1505,12 @@ class ChordTrainer:
                             # Count how many notes are currently active in played_notes
                             active_notes = sum(1 for n in self.played_notes if n is not None)
                             
-                            # Only treat as menu selection if it's a single isolated note
+                            # Only treat as menu trigger if it's a single isolated note
                             if active_notes <= 1:
-                                selected_index = SELECTION_NOTES.index(note)
-                                if selected_index < len(PRACTICE_OPTIONS):
-                                    name, new_sequence = PRACTICE_OPTIONS[selected_index]
-                                    print(f"Switching to: {name}")
-                                    print(f"New chord sequence: {new_sequence}")
-                                    
-                                    # Check if switching to metronome (empty sequence)
-                                    if len(new_sequence) == 0:
-                                        print("Switching to metronome mode")
-                                        self.chord_sequence = new_sequence
-                                        self.sequence_mode = False
-                                        return  # Exit handle_midi to allow metronome to start
-                                    
-                                    # Check if switching to strum practice mode
-                                    if new_sequence == ['STRUM']:
-                                        print("Switching to strum practice mode")
-                                        self.chord_sequence = new_sequence
-                                        self.sequence_mode = False
-                                        return  # Exit handle_midi to allow strum practice to start
-                                    
-                                    # Regular practice mode switch - extract mode and chords
-                                    self.randomize_mode = new_sequence[0]  # First element is 'R' or 'S'
-                                    self.chord_sequence = new_sequence[1:]  # Rest are chords
-                                    self.current_chord_index = 0
-                                    print(f"Randomize mode: {self.randomize_mode}")
-                                    print(f"Current chord index: {self.current_chord_index}")
-                                    print(f"First chord should be: {self.chord_sequence[0] if self.chord_sequence else 'EMPTY'}")
-                                    self.played_notes = [None] * 6
-                                    last_note = None
-                                    notes_hit = False
-                                    started = False
-                                    self.display_target_chord()
-                                    continue
+                                print(f"22nd fret detected on string {SELECTION_NOTES.index(note)+1} - returning to menu...")
+                                return 'menu'
                             else:
-                                print(f"Menu note detected but part of chord strum ({active_notes} notes), ignoring for menu")
+                                print(f"22nd fret in chord strum ({active_notes} notes), ignoring for menu")
                         
                         # Check time difference FIRST before processing
                         if utime.ticks_diff(utime.ticks_ms(), time_last_chord) > 500:
@@ -1756,36 +1691,61 @@ class ChordTrainer:
             print(f"MIDI handler error: {e}")
             self.connected = False
     
-    async def show_menu_and_wait_for_selection(self):
-        """Show practice menu and wait for user to select with 22nd fret note"""
+    async def show_menu_and_wait_for_selection(self, page=0):
+        """Show practice menu and wait for user to select with 22nd fret note
+        
+        Args:
+            page: Current page number (0-indexed)
+        """
         current_selection = 0
         
         # Get all options (built-in + custom)
         all_options = self.get_all_practice_options()
+        
+        # Calculate pagination
+        items_per_page = 5  # Show 5 items + "More" option on string 6
+        total_pages = (len(all_options) + items_per_page - 1) // items_per_page
+        page = page % total_pages if total_pages > 0 else 0  # Wrap around
+        start_idx = page * items_per_page
+        end_idx = min(start_idx + items_per_page, len(all_options))
+        page_options = all_options[start_idx:end_idx]
+        has_more_pages = total_pages > 1  # Always show More if multiple pages
         
         # Display menu
         self.tft.fill(self.COLOR_BLACK)
         self.tft.text("Select Practice:", 50, 10, self.COLOR_YELLOW)
         self.tft.text("Use 22nd fret", 55, 30, self.COLOR_WHITE)
         
-        # Show options (limit to first 6 for display)
+        # Show page indicator if multiple pages
+        if has_more_pages:
+            self.tft.text(f"Page {page+1}/{total_pages}", 80, 220, self.COLOR_BLUE)
+        
+        # Show options (up to 5 items)
         y_pos = 50
-        for i, (name, _) in enumerate(all_options[:6]):
+        for i, (name, _) in enumerate(page_options):
             color = self.COLOR_GREEN if i == current_selection else self.COLOR_WHITE
             marker = ">" if i == current_selection else " "
             self.tft.text(f"{marker}{i+1}. {name}", 30, y_pos, color)
             y_pos += 20
         
-        if len(all_options) > 6:
-            self.tft.text(f"+{len(all_options)-6} more...", 40, y_pos, self.COLOR_ORANGE)
+        # Show "More" option on string 6 if there are multiple pages
+        if has_more_pages:
+            next_page = (page + 1) % total_pages
+            self.tft.text(f" 6. More... (page {next_page+1})", 30, y_pos, self.COLOR_ORANGE)
         
-        self.tft.text("String 1-6 = opt 1-6", 30, y_pos + 10, self.COLOR_ORANGE)
+        self.tft.text("String 1-5 = options", 30, 185, self.COLOR_WHITE)
+        if has_more_pages:
+            self.tft.text("String 6 = More", 40, 200, self.COLOR_ORANGE)
+        
         self.tft.show()
         
-        print("Menu displayed. Waiting for 22nd fret selection...")
+        print(f"Menu page {page+1}/{total_pages} displayed. Waiting for 22nd fret selection...")
         print("Play 22nd fret on:")
-        for i, (name, _) in enumerate(all_options):
+        for i, (name, _) in enumerate(page_options):
             print(f"  String {i+1}: {name}")
+        if has_more_pages:
+            next_page = (page + 1) % total_pages
+            print(f"  String 6: More... (go to page {next_page+1})")
         
         # Wait for selection
         while True:
@@ -1819,8 +1779,16 @@ class ChordTrainer:
                     
                     # Check if it's a 22nd fret note
                     if note in SELECTION_NOTES:
-                        selected_index = SELECTION_NOTES.index(note)
-                        if selected_index < len(all_options):
+                        selected_string = SELECTION_NOTES.index(note)
+                        
+                        # String 6 (index 5) is "More" if there are multiple pages
+                        if selected_string == 5 and has_more_pages:
+                            print("More selected, showing next page...")
+                            return await self.show_menu_and_wait_for_selection(page + 1)
+                        
+                        # Regular selection
+                        selected_index = start_idx + selected_string
+                        if selected_string < len(page_options):
                             print(f"Selected: {all_options[selected_index][0]}")
                             
                             # Flash selection
@@ -1860,65 +1828,27 @@ class ChordTrainer:
             
             print(f"Starting practice: {len(self.chord_sequence)} chords")
             print("Starting MIDI handler...")
-            print("Play 22nd fret on strings 1-6 anytime to switch practice mode")
+            print("Play 22nd fret on any string to return to menu")
             
-            # Inner loop to allow switching between practice and metronome
-            result = None
+            # Run the selected mode
             try:
-                while True:  # Inner loop for mode switching
-                    # Check if metronome mode
-                    if len(self.chord_sequence) == 0:
-                        print("Metronome mode selected")
-                        # Show BPM selection menu
-                        selected_bpm = await self.show_bpm_menu()
-                        result = await self.run_metronome(bpm=selected_bpm)
-                        # After metronome exits, check what mode to enter
-                        if result == 'menu':
-                            break  # Return to main menu
-                        elif result == 'practice' and self.sequence_mode:
-                            # User selected a practice mode from metronome
-                            self.display_target_chord()
-                            continue_result = await self.handle_midi()
-                            # After handle_midi returns, check if switching to metronome
-                            if continue_result == 'menu':
-                                break  # Return to main menu
-                            elif len(self.chord_sequence) == 0:
-                                continue  # Loop back to metronome
-                            elif self.chord_sequence == ['STRUM']:
-                                continue  # Loop back to strum practice
-                            else:
-                                break  # Exit inner loop
-                    # Check if strum practice mode
-                    elif self.chord_sequence == ['STRUM']:
-                        print("Strum Practice mode selected")
-                        # Show BPM selection menu
-                        selected_bpm = await self.show_bpm_menu()
-                        result = await self.run_strum_metronome(bpm=selected_bpm)
-                        # After strum practice exits, check what mode to enter
-                        if result == 'menu':
-                            break  # Return to main menu
-                        elif result == 'practice' and self.sequence_mode:
-                            # User selected a practice mode from strum practice
-                            self.display_target_chord()
-                            continue_result = await self.handle_midi()
-                            # After handle_midi returns, check if switching modes
-                            if continue_result == 'menu':
-                                break  # Return to main menu
-                            elif len(self.chord_sequence) == 0:
-                                continue  # Loop back to metronome
-                            elif self.chord_sequence == ['STRUM']:
-                                continue  # Loop back to strum practice
-                            else:
-                                break  # Exit inner loop
-                    else:
-                        result = await self.handle_midi()
-                        # After handle_midi returns, check result
-                        if result == 'menu':
-                            break  # Return to main menu
-                        elif len(self.chord_sequence) == 0:
-                            continue  # Loop back to metronome
-                        else:
-                            break  # Exit inner loop
+                # Check if metronome mode
+                if len(self.chord_sequence) == 0:
+                    print("Metronome mode selected")
+                    # Show BPM selection menu
+                    selected_bpm = await self.show_bpm_menu()
+                    result = await self.run_metronome(bpm=selected_bpm)
+                # Check if strum practice mode
+                elif self.chord_sequence == ['STRUM']:
+                    print("Strum Practice mode selected")
+                    # Show BPM selection menu
+                    selected_bpm = await self.show_bpm_menu()
+                    result = await self.run_strum_metronome(bpm=selected_bpm)
+                # Regular chord practice
+                else:
+                    result = await self.handle_midi()
+                
+                # Any result returns to menu (outer loop continues)
             except Exception as e:
                 print(f"Error: {e}")
         
