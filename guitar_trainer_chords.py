@@ -3,6 +3,7 @@ import asyncio
 import aioble
 import bluetooth
 import network
+import urandom
 from gc9a01_spi_fb import GC9A01_SPI_FB
 from machine import SPI, Pin
 from micropython import const
@@ -70,13 +71,15 @@ CHORD_MIDI_NOTES = {
 }
 
 # Practice options for menu
+# Format: (name, [mode, chord1, chord2, ...])
+# Mode: 'R' = Randomize after each completion, 'S' = Sequential (no randomization)
 PRACTICE_OPTIONS = [
-    ('Simple 3', ['C', 'G', 'D']),
-    ('Classic 4', ['C', 'G', 'Am', 'Em']),
-    ('All Basic', ['C', 'G', 'D', 'A', 'E', 'Am', 'Em', 'Dm']),
-    ('Major Chords', ['C', 'D', 'E', 'F', 'G', 'A']),
-    ('Horse With NN', ['Em', 'D6/9']),
+    ('Simple 3', ['R', 'C', 'G', 'D']),
+    ('Classic 4', ['R', 'C', 'G', 'Am', 'Em']),
+    ('All Basic', ['R', 'C', 'G', 'D', 'A', 'E', 'Am', 'Em', 'Dm']),
+    ('Horse With NN', ['S', 'Em', 'D6/9']),
     ('Metronome', []),  # Empty list signals metronome mode
+    ('Strum Practice', ['STRUM']),  # Special marker for strum-based metronome
 ]
 
 # Menu selection notes (22nd fret)
@@ -245,6 +248,7 @@ class ChordTrainer:
         
         # Chord sequence for practice
         self.chord_sequence = chord_sequence or []
+        self.randomize_mode = 'R'  # Default to randomize
         self.current_chord_index = 0
         self.sequence_mode = len(self.chord_sequence) > 0
         
@@ -664,9 +668,16 @@ class ChordTrainer:
                         if selected_index < len(PRACTICE_OPTIONS):
                             name, new_sequence = PRACTICE_OPTIONS[selected_index]
                             print(f"Switching from metronome to: {name}")
-                            self.chord_sequence = new_sequence
+                            
+                            # Extract mode if present
+                            if len(new_sequence) > 0 and new_sequence[0] in ['R', 'S']:
+                                self.randomize_mode = new_sequence[0]
+                                self.chord_sequence = new_sequence[1:]
+                            else:
+                                self.chord_sequence = new_sequence
+                            
                             self.current_chord_index = 0
-                            self.sequence_mode = len(new_sequence) > 0
+                            self.sequence_mode = len(self.chord_sequence) > 0
                             running = False
                             listener_task.cancel()
                             return 'practice' if self.sequence_mode else 'menu'
@@ -849,6 +860,360 @@ class ChordTrainer:
             running = False
             listener_task.cancel()
     
+    async def run_strum_metronome(self, bpm=60):
+        """Run visual metronome mode that advances on strum detection
+        
+        Args:
+            bpm: Target BPM for timing display (default 60)
+        
+        Returns:
+            'menu' if returning to menu, 'practice' if switching to practice mode
+        """
+        beat_num = 1
+        beat_interval_ms = int(60000 / bpm)  # Convert BPM to milliseconds for timing comparison
+        last_strum_time = 0
+        
+        # Metronome pattern: each entry is [chord, strum_direction]
+        # Strum direction: True=Down, False=Up, None=Rest (no strum)
+        metronome_pattern = [
+            ['Em', True],    # Beat 1: Em chord, down strum
+            ['Em', True],    # Beat 2: Em chord, down strum
+            ['Em', False],   # Beat 3: Em chord, up strum
+            ['Em', False],   # Beat 4: Em chord, up strum
+            ['Em', True],    # Beat 5: Em chord, down strum
+            ['Em', False],   # Beat 6: Em chord, up strum
+            ['D6/9', True],  # Beat 7: D6/9 chord, down strum
+            ['D6/9', True],  # Beat 8: D6/9 chord, down strum
+            ['D6/9', False], # Beat 9: D6/9 chord, up strum
+            ['D6/9', False], # Beat 10: D6/9 chord, up strum
+            ['D6/9', True],  # Beat 11: D6/9 chord, down strum
+            ['D6/9', False], # Beat 12: D6/9 chord, up strum
+        ]
+        pattern_index = 0
+        current_chord = metronome_pattern[pattern_index][0]
+        
+        print(f"Strum Practice mode: Target {bpm} BPM")
+        print("Strum to advance beats")
+        print("Play 22nd fret to switch mode or return to menu")
+        
+        # Initial display
+        self.tft.fill(self.COLOR_BLACK)
+        self.tft.text("STRUM PRACTICE", 55, 5, self.COLOR_YELLOW)
+        
+        # Draw beat squares with chords above and directions below
+        y_pos = 110
+        square_size = 35  # Larger squares
+        spacing = 50  # More space between squares
+        start_x = 20  # Start further left
+        
+        # Show next chord (2 beats ahead)
+        next_chord_index = (pattern_index + 2) % len(metronome_pattern)
+        next_chord = metronome_pattern[next_chord_index][0]
+        chord_x_offset = -5 if len(next_chord) > 1 else 5
+        self.draw_large_text(next_chord, 90 + chord_x_offset, 40, self.COLOR_YELLOW)
+        
+        for i in range(1, 5):
+            x_pos = start_x + (i - 1) * spacing
+            
+            # Get strum for this beat position
+            display_index = (pattern_index + i - 1) % len(metronome_pattern)
+            strum_for_beat = metronome_pattern[display_index][1]
+            
+            # Determine square color based on current beat
+            if i == beat_num:
+                # Current beat - always green
+                color = self.COLOR_GREEN
+            else:
+                # Not current beat - always white
+                color = self.COLOR_WHITE
+            
+            # Draw filled square
+            self.tft.fill_rect(x_pos, y_pos, square_size, square_size, color)
+            
+            # Draw beat number inside square in white
+            self.tft.text(str(i), x_pos + 13, y_pos + 13, self.COLOR_WHITE)
+            
+            # Draw strum direction arrow below square - larger
+            strum_dir = strum_for_beat
+            arrow_center_x = x_pos + (square_size // 2)
+            arrow_y = y_pos + square_size + 10
+            arrow_length = 18
+            arrow_head_size = 5
+            
+            if strum_dir is True:
+                # Down arrow - always green - thicker
+                strum_color = self.COLOR_GREEN
+                # Vertical line (thicker)
+                self.tft.vline(arrow_center_x, arrow_y, arrow_length, strum_color)
+                self.tft.vline(arrow_center_x + 1, arrow_y, arrow_length, strum_color)
+                # Arrow head (down)
+                for offset in range(3):
+                    self.tft.line(arrow_center_x, arrow_y + arrow_length, arrow_center_x - arrow_head_size, arrow_y + arrow_length - arrow_head_size + offset, strum_color)
+                    self.tft.line(arrow_center_x, arrow_y + arrow_length, arrow_center_x + arrow_head_size, arrow_y + arrow_length - arrow_head_size + offset, strum_color)
+            elif strum_dir is False:
+                # Up arrow - always blue - thicker
+                strum_color = self.COLOR_BLUE
+                # Vertical line (thicker)
+                self.tft.vline(arrow_center_x, arrow_y, arrow_length, strum_color)
+                self.tft.vline(arrow_center_x + 1, arrow_y, arrow_length, strum_color)
+                # Arrow head (up)
+                for offset in range(3):
+                    self.tft.line(arrow_center_x, arrow_y, arrow_center_x - arrow_head_size, arrow_y + arrow_head_size - offset, strum_color)
+                    self.tft.line(arrow_center_x, arrow_y, arrow_center_x + arrow_head_size, arrow_y + arrow_head_size - offset, strum_color)
+            else:
+                # Rest - X mark - always gray - larger and thicker
+                strum_color = self.tft.color565(100, 100, 100)
+                x_size = 7
+                for offset in range(3):
+                    self.tft.line(arrow_center_x - x_size, arrow_y + offset, arrow_center_x + x_size, arrow_y + arrow_length - offset, strum_color)
+                    self.tft.line(arrow_center_x + x_size, arrow_y + offset, arrow_center_x - x_size, arrow_y + arrow_length - offset, strum_color)
+        
+        self.tft.text("22nd fret string", 55, 190, self.COLOR_ORANGE)
+        self.tft.text("to change mode", 55, 210, self.COLOR_ORANGE)
+        
+        # Show target BPM
+        self.tft.text(f"Target: {bpm} BPM", 70, 170, self.COLOR_YELLOW)
+        
+        self.tft.show()
+        
+        # Variables for debouncing strums and timing
+        strum_debounce_ms = 200  # Ignore notes within 200ms of last strum
+        timing_display_ms = 1500  # Show timing for 1.5 seconds
+        
+        try:
+            while self.connected:
+                # Wait for MIDI input
+                data = await self.midi_characteristic.notified()
+                msg = self.parse_midi_message(data)
+                
+                if msg and msg[0] == 'note_on':
+                    note = msg[1]
+                    current_time = utime.ticks_ms()
+                    print(f"Strum Practice - Note received: {note}")
+                    
+                    # Check if it's a menu selection note
+                    if note in SELECTION_NOTES:
+                        selected_index = SELECTION_NOTES.index(note)
+                        if selected_index < len(PRACTICE_OPTIONS):
+                            name, new_sequence = PRACTICE_OPTIONS[selected_index]
+                            print(f"Switching from strum practice to: {name}")
+                            
+                            # Extract mode if present
+                            if len(new_sequence) > 0 and new_sequence[0] in ['R', 'S']:
+                                self.randomize_mode = new_sequence[0]
+                                self.chord_sequence = new_sequence[1:]
+                            else:
+                                self.chord_sequence = new_sequence
+                            
+                            self.current_chord_index = 0
+                            self.sequence_mode = len(self.chord_sequence) > 0
+                            
+                            if len(new_sequence) == 0:
+                                return 'menu'
+                            elif new_sequence == ['STRUM']:
+                                continue  # Stay in strum mode
+                            else:
+                                return 'practice'
+                    else:
+                        # Check if enough time has passed since last strum
+                        time_since_last = utime.ticks_diff(current_time, last_strum_time)
+                        if time_since_last < strum_debounce_ms:
+                            print(f"Debouncing - only {time_since_last}ms since last strum")
+                            continue
+                        
+                        # Calculate timing accuracy
+                        timing_diff_ms = 0
+                        bar_width = 0
+                        bar_color = self.COLOR_WHITE
+                        bar_x_pos = 120  # Center of bar graph
+                        
+                        if last_strum_time > 0:  # Not the first beat
+                            timing_diff_ms = time_since_last - beat_interval_ms
+                            
+                            # Calculate bar width and color based on timing
+                            # Max bar width = 100 pixels (50 pixels each side from center)
+                            # Map timing difference to bar width (max 500ms = full width)
+                            max_timing_for_full_bar = 500  # ms
+                            bar_width = min(100, int(abs(timing_diff_ms) * 100 / max_timing_for_full_bar))
+                            
+                            # Determine color based on accuracy
+                            if abs(timing_diff_ms) <= 50:  # Within 50ms - excellent
+                                bar_color = self.COLOR_GREEN
+                            elif abs(timing_diff_ms) <= 100:  # Within 100ms - good
+                                bar_color = self.COLOR_YELLOW
+                            else:  # More than 100ms off
+                                bar_color = self.COLOR_RED
+                        
+                        # Update last strum time
+                        last_strum_time = current_time
+                        
+                        # Any non-menu note advances the beat
+                        beat_num_index = beat_num % 4
+                        beat_num = (beat_num % 4) + 1
+                        
+                        # Move to next pattern entry
+                        pattern_index = (pattern_index + 1) % len(metronome_pattern)
+                        current_chord = metronome_pattern[pattern_index][0]
+                        
+                        # Redraw display based on beat
+                        if beat_num == 1:
+                            # Full redraw
+                            self.tft.fill(self.COLOR_BLACK)
+                            self.tft.text("STRUM PRACTICE", 55, 5, self.COLOR_YELLOW)
+                            
+                            # Show next chord (2 beats ahead)
+                            next_chord_index = (pattern_index + 2) % len(metronome_pattern)
+                            next_chord = metronome_pattern[next_chord_index][0]
+                            chord_x_offset = -5 if len(next_chord) > 1 else 5
+                            self.draw_large_text(next_chord, 90 + chord_x_offset, 40, self.COLOR_YELLOW)
+                            
+                            for i in range(1, 5):
+                                x_pos = start_x + (i - 1) * spacing
+                                
+                                # Get strum for this beat position
+                                display_index = (pattern_index + i - 1) % len(metronome_pattern)
+                                strum_for_beat = metronome_pattern[display_index][1]
+                                
+                                # Determine square color
+                                if i == beat_num:
+                                    color = self.COLOR_GREEN
+                                else:
+                                    color = self.COLOR_WHITE
+                                
+                                # Draw filled square
+                                self.tft.fill_rect(x_pos, y_pos, square_size, square_size, color)
+                                self.tft.text(str(i), x_pos + 13, y_pos + 13, self.COLOR_WHITE)
+                                
+                                # Draw strum arrow
+                                strum_dir = strum_for_beat
+                                arrow_center_x = x_pos + (square_size // 2)
+                                arrow_y = y_pos + square_size + 10
+                                arrow_length = 18
+                                arrow_head_size = 5
+                                
+                                if strum_dir is True:
+                                    strum_color = self.COLOR_GREEN
+                                    self.tft.vline(arrow_center_x, arrow_y, arrow_length, strum_color)
+                                    self.tft.vline(arrow_center_x + 1, arrow_y, arrow_length, strum_color)
+                                    for offset in range(3):
+                                        self.tft.line(arrow_center_x, arrow_y + arrow_length, arrow_center_x - arrow_head_size, arrow_y + arrow_length - arrow_head_size + offset, strum_color)
+                                        self.tft.line(arrow_center_x, arrow_y + arrow_length, arrow_center_x + arrow_head_size, arrow_y + arrow_length - arrow_head_size + offset, strum_color)
+                                elif strum_dir is False:
+                                    strum_color = self.COLOR_BLUE
+                                    self.tft.vline(arrow_center_x, arrow_y, arrow_length, strum_color)
+                                    self.tft.vline(arrow_center_x + 1, arrow_y, arrow_length, strum_color)
+                                    for offset in range(3):
+                                        self.tft.line(arrow_center_x, arrow_y, arrow_center_x - arrow_head_size, arrow_y + arrow_head_size - offset, strum_color)
+                                        self.tft.line(arrow_center_x, arrow_y, arrow_center_x + arrow_head_size, arrow_y + arrow_head_size - offset, strum_color)
+                                else:
+                                    strum_color = self.tft.color565(100, 100, 100)
+                                    x_size = 7
+                                    for offset in range(3):
+                                        self.tft.line(arrow_center_x - x_size, arrow_y + offset, arrow_center_x + x_size, arrow_y + arrow_length - offset, strum_color)
+                                        self.tft.line(arrow_center_x + x_size, arrow_y + offset, arrow_center_x - x_size, arrow_y + arrow_length - offset, strum_color)
+                            
+                            self.tft.text("22nd fret string", 55, 190, self.COLOR_ORANGE)
+                            self.tft.text("to change mode", 55, 210, self.COLOR_ORANGE)
+                            
+                            # Show target BPM
+                            self.tft.text(f"Target: {bpm} BPM", 70, 170, self.COLOR_YELLOW)
+                            
+                            # Draw timing bar graph at bottom
+                            bar_y = 225
+                            bar_height = 10
+                            # Draw center line
+                            self.tft.vline(bar_x_pos, bar_y, bar_height, self.COLOR_WHITE)
+                            # Draw timing bar if available
+                            if bar_width > 0:
+                                if timing_diff_ms > 0:  # Too slow - bar to the right
+                                    self.tft.fill_rect(bar_x_pos, bar_y, bar_width, bar_height, bar_color)
+                                else:  # Too fast - bar to the left
+                                    self.tft.fill_rect(bar_x_pos - bar_width, bar_y, bar_width, bar_height, bar_color)
+                        else:
+                            # On beat 4, update square 1 with next chord info
+                            if beat_num == 4:
+                                # Clear and redraw square 1 area including chord above
+                                x_pos = start_x
+                                
+                                # Clear area above square 1 for new chord
+                                self.tft.fill_rect(x_pos - 10, y_pos - 70, 55, 65, self.COLOR_BLACK)
+                                
+                                # Get chord for next beat (beat 1)
+                                next_beat_index = (pattern_index + 1) % len(metronome_pattern)
+                                next_chord = metronome_pattern[next_beat_index][0]
+                                chord_x_offset = -5 if len(next_chord) > 1 else 5
+                                self.draw_large_text(next_chord, x_pos + chord_x_offset, y_pos - 50, self.COLOR_ORANGE)
+                                
+                                # Get strum direction for next beat
+                                next_strum = metronome_pattern[next_beat_index][1]
+                                
+                                # Draw square 1 (white since not current beat)
+                                self.tft.fill_rect(x_pos, y_pos, square_size, square_size, self.COLOR_WHITE)
+                                self.tft.text("1", x_pos + 13, y_pos + 13, self.COLOR_WHITE)
+                                
+                                # Draw strum arrow for square 1
+                                arrow_center_x = x_pos + (square_size // 2)
+                                arrow_y = y_pos + square_size + 10
+                                arrow_length = 18
+                                arrow_head_size = 5
+                                
+                                # Clear arrow area first
+                                self.tft.fill_rect(x_pos - 5, arrow_y - 2, square_size + 10, arrow_length + 12, self.COLOR_BLACK)
+                                
+                                if next_strum is True:
+                                    strum_color = self.COLOR_GREEN
+                                    self.tft.vline(arrow_center_x, arrow_y, arrow_length, strum_color)
+                                    self.tft.vline(arrow_center_x + 1, arrow_y, arrow_length, strum_color)
+                                    for offset in range(3):
+                                        self.tft.line(arrow_center_x, arrow_y + arrow_length, arrow_center_x - arrow_head_size, arrow_y + arrow_length - arrow_head_size + offset, strum_color)
+                                        self.tft.line(arrow_center_x, arrow_y + arrow_length, arrow_center_x + arrow_head_size, arrow_y + arrow_length - arrow_head_size + offset, strum_color)
+                                elif next_strum is False:
+                                    strum_color = self.COLOR_BLUE
+                                    self.tft.vline(arrow_center_x, arrow_y, arrow_length, strum_color)
+                                    self.tft.vline(arrow_center_x + 1, arrow_y, arrow_length, strum_color)
+                                    for offset in range(3):
+                                        self.tft.line(arrow_center_x, arrow_y, arrow_center_x - arrow_head_size, arrow_y + arrow_head_size - offset, strum_color)
+                                        self.tft.line(arrow_center_x, arrow_y, arrow_center_x + arrow_head_size, arrow_y + arrow_head_size - offset, strum_color)
+                                else:
+                                    strum_color = self.tft.color565(100, 100, 100)
+                                    x_size = 7
+                                    for offset in range(3):
+                                        self.tft.line(arrow_center_x - x_size, arrow_y + offset, arrow_center_x + x_size, arrow_y + arrow_length - offset, strum_color)
+                                        self.tft.line(arrow_center_x + x_size, arrow_y + offset, arrow_center_x - x_size, arrow_y + arrow_length - offset, strum_color)
+                            
+                            # Update square colors
+                            for i in range(1, 5):
+                                x_pos = start_x + (i - 1) * spacing
+                                
+                                # Determine square color based on current beat
+                                if i == beat_num:
+                                    color = self.COLOR_GREEN
+                                else:
+                                    color = self.COLOR_WHITE
+                                
+                                # Draw filled square
+                                self.tft.fill_rect(x_pos, y_pos, square_size, square_size, color)
+                                self.tft.text(str(i), x_pos + 13, y_pos + 13, self.COLOR_WHITE)
+                            
+                            # Clear timing bar area and redraw
+                            bar_y = 225
+                            bar_height = 10
+                            self.tft.fill_rect(0, bar_y, 240, bar_height, self.COLOR_BLACK)
+                            # Draw center line
+                            self.tft.vline(bar_x_pos, bar_y, bar_height, self.COLOR_WHITE)
+                            # Draw timing bar if available
+                            if bar_width > 0:
+                                if timing_diff_ms > 0:  # Too slow - bar to the right
+                                    self.tft.fill_rect(bar_x_pos, bar_y, bar_width, bar_height, bar_color)
+                                else:  # Too fast - bar to the left
+                                    self.tft.fill_rect(bar_x_pos - bar_width, bar_y, bar_width, bar_height, bar_color)
+                        
+                        self.tft.show()
+                
+        except Exception as e:
+            print(f"Error in strum metronome: {e}")
+            return 'menu'
+    
     def parse_midi_message(self, data):
         """Parse BLE MIDI message"""
         if len(data) < 3:
@@ -1014,32 +1379,52 @@ class ChordTrainer:
                         print(f"Note On: {note}")
                         
                         # Check if it's a menu selection note (22nd fret) - switch practice mode
+                        # Only trigger if it's an isolated note (not part of a chord strum)
                         print(f"Checking if {note} in SELECTION_NOTES {SELECTION_NOTES}: {note in SELECTION_NOTES}")
                         if note in SELECTION_NOTES:
-                            selected_index = SELECTION_NOTES.index(note)
-                            if selected_index < len(PRACTICE_OPTIONS):
-                                name, new_sequence = PRACTICE_OPTIONS[selected_index]
-                                print(f"Switching to: {name}")
-                                print(f"New chord sequence: {new_sequence}")
-                                
-                                # Check if switching to metronome (empty sequence)
-                                if len(new_sequence) == 0:
-                                    print("Switching to metronome mode")
-                                    self.chord_sequence = new_sequence
-                                    self.sequence_mode = False
-                                    return  # Exit handle_midi to allow metronome to start
-                                
-                                # Regular practice mode switch
-                                self.chord_sequence = new_sequence
-                                self.current_chord_index = 0
-                                print(f"Current chord index: {self.current_chord_index}")
-                                print(f"First chord should be: {new_sequence[0] if new_sequence else 'EMPTY'}")
-                                self.played_notes = [None] * 6
-                                last_note = None
-                                notes_hit = False
-                                started = False
-                                self.display_target_chord()
-                                continue
+                            # Wait a short moment to see if more notes come (indicating a chord strum)
+                            await asyncio.sleep_ms(100)
+                            
+                            # Count how many notes are currently active in played_notes
+                            active_notes = sum(1 for n in self.played_notes if n is not None)
+                            
+                            # Only treat as menu selection if it's a single isolated note
+                            if active_notes <= 1:
+                                selected_index = SELECTION_NOTES.index(note)
+                                if selected_index < len(PRACTICE_OPTIONS):
+                                    name, new_sequence = PRACTICE_OPTIONS[selected_index]
+                                    print(f"Switching to: {name}")
+                                    print(f"New chord sequence: {new_sequence}")
+                                    
+                                    # Check if switching to metronome (empty sequence)
+                                    if len(new_sequence) == 0:
+                                        print("Switching to metronome mode")
+                                        self.chord_sequence = new_sequence
+                                        self.sequence_mode = False
+                                        return  # Exit handle_midi to allow metronome to start
+                                    
+                                    # Check if switching to strum practice mode
+                                    if new_sequence == ['STRUM']:
+                                        print("Switching to strum practice mode")
+                                        self.chord_sequence = new_sequence
+                                        self.sequence_mode = False
+                                        return  # Exit handle_midi to allow strum practice to start
+                                    
+                                    # Regular practice mode switch - extract mode and chords
+                                    self.randomize_mode = new_sequence[0]  # First element is 'R' or 'S'
+                                    self.chord_sequence = new_sequence[1:]  # Rest are chords
+                                    self.current_chord_index = 0
+                                    print(f"Randomize mode: {self.randomize_mode}")
+                                    print(f"Current chord index: {self.current_chord_index}")
+                                    print(f"First chord should be: {self.chord_sequence[0] if self.chord_sequence else 'EMPTY'}")
+                                    self.played_notes = [None] * 6
+                                    last_note = None
+                                    notes_hit = False
+                                    started = False
+                                    self.display_target_chord()
+                                    continue
+                            else:
+                                print(f"Menu note detected but part of chord strum ({active_notes} notes), ignoring for menu")
                         
                         # Check time difference FIRST before processing
                         if utime.ticks_diff(utime.ticks_ms(), time_last_chord) > 500:
@@ -1159,14 +1544,28 @@ class ChordTrainer:
                                 # Correct!
                                 print("Correct chord!")
                                 self.display_correct_chord(target_chord)
-                                await asyncio.sleep_ms(3000)
+                                await asyncio.sleep_ms(500)
                                 
                                 # Move to next chord
                                 self.current_chord_index += 1
                                 
                                 if self.current_chord_index >= len(self.chord_sequence):
-                                    # Sequence complete! Reset to start and repeat
-                                    print("Sequence complete! Starting over...")
+                                    # Sequence complete! Check if should randomize
+                                    if self.randomize_mode == 'R':
+                                        print("Sequence complete! Randomizing and starting over...")
+                                        
+                                        # Fisher-Yates shuffle algorithm
+                                        shuffled = list(self.chord_sequence)
+                                        n = len(shuffled)
+                                        for i in range(n - 1, 0, -1):
+                                            j = urandom.getrandbits(16) % (i + 1)
+                                            shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+                                        
+                                        self.chord_sequence = shuffled
+                                        print(f"New randomized order: {self.chord_sequence}")
+                                    else:
+                                        print("Sequence complete! Starting over in same order...")
+                                    
                                     self.current_chord_index = 0
                                 
                                 # Show next target (or first target if looping)
@@ -1179,7 +1578,7 @@ class ChordTrainer:
                                 print("display_wrong_chord completed")
                                 
                                 # Wait a moment to show the wrong chord
-                                await asyncio.sleep_ms(2000)
+                                await asyncio.sleep_ms(500)
                                 
                                 # Clear played notes for next attempt
                                 self.played_notes = [None] * 6
@@ -1268,8 +1667,14 @@ class ChordTrainer:
         print("Showing practice menu...")
         selected_chords = await self.show_menu_and_wait_for_selection()
         
-        # Set the chord sequence
-        self.chord_sequence = selected_chords
+        # Set the chord sequence - extract mode if present
+        if len(selected_chords) > 0 and selected_chords[0] in ['R', 'S']:
+            self.randomize_mode = selected_chords[0]
+            self.chord_sequence = selected_chords[1:]
+        else:
+            # Empty or special mode (metronome, strum)
+            self.chord_sequence = selected_chords
+        
         self.sequence_mode = True  # Always in sequence mode now
         self.current_chord_index = 0
         
@@ -1293,11 +1698,33 @@ class ChordTrainer:
                         # After handle_midi returns, check if switching to metronome
                         if len(self.chord_sequence) == 0:
                             continue  # Loop back to metronome
+                        elif self.chord_sequence == ['STRUM']:
+                            continue  # Loop back to strum practice
                         else:
                             break  # Exit loop
                     elif result == 'menu':
                         # User selected metronome again, show BPM menu again
                         continue  # Loop back to metronome
+                # Check if strum practice mode
+                elif self.chord_sequence == ['STRUM']:
+                    print("Strum Practice mode selected")
+                    # Show BPM selection menu
+                    selected_bpm = await self.show_bpm_menu()
+                    result = await self.run_strum_metronome(bpm=selected_bpm)
+                    # After strum practice exits, check what mode to enter
+                    if result == 'practice' and self.sequence_mode:
+                        # User selected a practice mode from strum practice
+                        self.display_target_chord()
+                        await self.handle_midi()
+                        # After handle_midi returns, check if switching modes
+                        if len(self.chord_sequence) == 0:
+                            continue  # Loop back to metronome
+                        elif self.chord_sequence == ['STRUM']:
+                            continue  # Loop back to strum practice
+                        else:
+                            break  # Exit loop
+                    elif result == 'menu':
+                        continue  # Loop back
                 else:
                     await self.handle_midi()
                     # After handle_midi returns, check if switching to metronome
