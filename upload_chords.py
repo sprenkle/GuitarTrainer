@@ -78,47 +78,116 @@ class ChordUploader:
             print("Disconnected")
     
     def upload_json_file(self, json_data):
-        """Upload entire JSON chord list file to device"""
+        """Upload entire JSON chord list file to device by writing directly to filesystem"""
         if not self.serial or not self.serial.is_open:
             print("Not connected to device")
             return False
         
         try:
-            # Clear input buffer before sending
-            self.serial.reset_input_buffer()
+            print(f"Uploading JSON file with {len(json_data)} chord lists...")
             
             # Convert to compact JSON string
             json_str = json.dumps(json_data)
             
-            # Send with protocol marker
-            data = f"CHORD_JSON|{json_str}\n"
+            # Enter REPL mode by sending Ctrl+C to interrupt any running program
+            print("  Interrupting running program...")
+            self.serial.write(b'\x03')  # Ctrl+C
+            time.sleep(0.5)
             
-            print(f"Uploading JSON file with {len(json_data)} chord lists...")
+            # Send Ctrl+C again to make sure
+            self.serial.write(b'\x03')
+            time.sleep(0.3)
             
-            # Send via serial
-            self.serial.write(data.encode('utf-8'))
-            self.serial.flush()
+            # Clear buffer
+            response = self.serial.read(self.serial.in_waiting).decode('utf-8', errors='ignore')
+            print(f"  After interrupt: {response[:100]}")
             
-            # Wait for acknowledgment (give more time for Pico to process)
-            time.sleep(1.0)
+            # Enter raw REPL mode (Ctrl+A)
+            print("  Entering raw REPL mode...")
+            self.serial.write(b'\x01')  # Ctrl+A
+            time.sleep(0.5)
+            response = self.serial.read(self.serial.in_waiting).decode('utf-8', errors='ignore')
+            print(f"  Raw REPL response: {response[:100]}")
             
-            # Try to read response multiple times
-            for attempt in range(3):
-                if self.serial.in_waiting > 0:
-                    response = self.serial.read(self.serial.in_waiting).decode('utf-8', errors='ignore').strip()
-                    if 'OK' in response or 'Saved' in response:
-                        print("✓ Upload successful!")
-                        return True
-                    else:
-                        print(f"Response: {response}")
-                        return True
-                time.sleep(0.3)
+            if 'raw REPL' not in response and 'REPL' not in response:
+                print("  WARNING: May not be in raw REPL mode!")
             
-            print("Upload sent (no confirmation received)")
-            return True
+            # Write Python code to delete old file, save new file, and verify
+            code = f"""
+import json
+import os
+# Delete old file if it exists
+try:
+    os.remove('custom_chords.json')
+    print('Deleted old file')
+except:
+    print('No old file to delete')
+# Write new file
+data = {repr(json_str)}
+with open('custom_chords.json', 'w') as f:
+    f.write(data)
+print('Wrote new file')
+# Verify it was written correctly
+with open('custom_chords.json', 'r') as f:
+    verify = f.read()
+parsed = json.loads(verify)
+print('SAVED:' + str(len(parsed)) + ' lists')
+for item in parsed:
+    print('  - ' + item[0])
+"""
+            
+            print("  Sending code to Pico...")
+            # Execute the code
+            self.serial.write(code.encode('utf-8'))
+            time.sleep(0.2)
+            self.serial.write(b'\x04')  # Ctrl+D to execute
+            
+            print("  Waiting for execution...")
+            time.sleep(1.5)  # Give more time for file write
+            
+            # Read response
+            response = self.serial.read(self.serial.in_waiting).decode('utf-8', errors='ignore')
+            
+            print(f"\n  Full response from Pico:")
+            print("  " + "="*50)
+            print(response)
+            print("  " + "="*50)
+            
+            if 'SAVED:' in response:
+                print("✓ Upload successful! File written to Pico.")
+                print("  Performing soft reset...")
+                
+                # Exit raw REPL mode first (Ctrl+B)
+                time.sleep(0.2)
+                self.serial.write(b'\x02')  # Ctrl+B to exit raw REPL
+                time.sleep(0.2)
+                
+                # Perform soft reset (Ctrl+D)
+                self.serial.write(b'\x04')  # Ctrl+D
+                time.sleep(1.5)
+                
+                # Clear any output
+                self.serial.reset_input_buffer()
+                
+                print("✓ Device reset complete!")
+                print("  Your new chord lists should now appear in the menu.")
+                return True
+            else:
+                print(f"Upload may have failed. Response: {response[:200]}")
+                
+                # Try to recover - exit raw REPL and reset anyway
+                print("  Attempting to reset device...")
+                time.sleep(0.2)
+                self.serial.write(b'\x02')  # Ctrl+B
+                time.sleep(0.2)
+                self.serial.write(b'\x04')  # Ctrl+D
+                time.sleep(1.0)
+                return False
             
         except Exception as e:
             print(f"Upload failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def encode_chord_list(self, name, mode, chords):
@@ -219,10 +288,17 @@ def main():
                     print(f"Found {len(chord_data)} chord lists in file")
                     for item in chord_data:
                         name = item[0]
-                        mode = item[1][0]
-                        chords = item[1][1:]
-                        mode_text = "Random" if mode == "R" else "Sequential"
-                        print(f"  - {name} ({mode_text}): {', '.join(chords)}")
+                        data = item[1]
+                        if data[0] == "M":
+                            mode_text = "Metronome"
+                            print(f"  - {name} ({mode_text}): {len(data)-1} beats")
+                        else:
+                            mode = data[0]
+                            chords = data[1:]
+                            mode_text = "Random" if mode == "R" else "Sequential"
+                            print(f"  - {name} ({mode_text}): {', '.join(chords)}")
+                    
+                    print(f"\nUploading JSON data ({len(json.dumps(chord_data))} bytes)...")
                     
                     # Upload the entire JSON
                     uploader.upload_json_file(chord_data)

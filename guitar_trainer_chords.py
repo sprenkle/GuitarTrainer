@@ -613,11 +613,13 @@ class ChordTrainer:
                         
                         return selected_bpm
     
-    async def run_metronome(self, bpm=60):
+    async def run_metronome(self, bpm=60, pattern=None):
         """Run visual metronome mode with chord practice
         
         Args:
             bpm: Beats per minute (default 60)
+            pattern: List of [chord, strum_direction] entries. If None, uses default pattern.
+                    Strum direction: 'D'=Down, 'U'=Up, None=Rest
         
         Returns:
             'menu' if returning to menu, 'practice' if switching to practice mode
@@ -626,22 +628,27 @@ class ChordTrainer:
         beat_num = 0
         last_beat_time = utime.ticks_ms()
         
-        # Metronome pattern: each entry is [chord, strum_direction]
-        # Strum direction: True=Down, False=Up, None=Rest (no strum)
-        metronome_pattern = [
-            ['Em', True],    # Beat 1: C chord, down strum
-            ['Em', True],   # Beat 2: C chord, up strum
-            ['Em', False],    # Beat 3: C chord, rest
-            ['Em', False],    # Beat 4: C chord, down strum
-            ['Em', True],    # Beat 3: C chord, rest
-            ['Em', False],    # Beat 4: C chord, down strum
-            ['D6/9', True],    # Beat 5: G chord, down strum
-            ['D6/9', True],   # Beat 6: G chord, up strum
-            ['D6/9', False],    # Beat 7: G chord, rest
-            ['D6/9', False],    # Beat 8: G chord, down strum
-            ['D6/9', True],   # Beat 9: Am chord, down strum
-            ['D6/9', False],   # Beat 9: Am chord, down strum
-        ]
+        # Use provided pattern or default
+        if pattern is None:
+            # Default metronome pattern: each entry is [chord, strum_direction]
+            # Strum direction: 'D'=Down, 'U'=Up, None=Rest (no strum)
+            metronome_pattern = [
+                ['Em', 'D'],    # Beat 1
+                ['Em', 'D'],    # Beat 2
+                ['Em', 'U'],    # Beat 3
+                ['Em', 'U'],    # Beat 4
+                ['Em', 'D'],    # Beat 5
+                ['Em', 'U'],    # Beat 6
+                ['D6/9', 'D'],  # Beat 7
+                ['D6/9', 'D'],  # Beat 8
+                ['D6/9', 'U'],  # Beat 9
+                ['D6/9', 'U'],  # Beat 10
+                ['D6/9', 'D'],  # Beat 11
+                ['D6/9', 'U'],  # Beat 12
+            ]
+        else:
+            metronome_pattern = pattern
+        
         pattern_index = 0
         current_chord = metronome_pattern[pattern_index][0]
         
@@ -703,6 +710,15 @@ class ChordTrainer:
                     current_chord = metronome_pattern[pattern_index][0]
                     strum_direction = metronome_pattern[pattern_index][1]
                     
+                    # Convert strum direction to boolean for display
+                    # 'D'=True (down), 'U'=False (up), None/other=None (rest)
+                    if strum_direction == 'D':
+                        strum_dir_bool = True
+                    elif strum_direction == 'U':
+                        strum_dir_bool = False
+                    else:
+                        strum_dir_bool = None
+                    
                     # Only redraw full display on beat 1, otherwise just update current beat indicator
                     if beat_num == 1:
                         # Draw full screen
@@ -730,6 +746,14 @@ class ChordTrainer:
                             display_index = (pattern_index + i - 1) % len(metronome_pattern)
                             strum_for_beat = metronome_pattern[display_index][1]
                             
+                            # Convert to boolean for display
+                            if strum_for_beat == 'D':
+                                strum_dir = True
+                            elif strum_for_beat == 'U':
+                                strum_dir = False
+                            else:
+                                strum_dir = None
+                            
                             # Determine square color based on current beat
                             if i == beat_num:
                                 # Current beat - always green
@@ -745,7 +769,6 @@ class ChordTrainer:
                             self.tft.text(str(i), x_pos + 13, y_pos + 13, self.COLOR_WHITE)
                             
                             # Draw strum direction arrow below square - larger
-                            strum_dir = strum_for_beat
                             arrow_center_x = x_pos + (square_size // 2)
                             arrow_y = y_pos + square_size + 10
                             arrow_length = 18  # Increased from 12
@@ -1327,66 +1350,115 @@ class ChordTrainer:
         self.tft.show()
     
     def get_all_practice_options(self):
-        """Get combined list of built-in and custom chord lists"""
-        return PRACTICE_OPTIONS + self.custom_chord_lists
+        """Get combined list of built-in and custom chord lists
+        
+        If custom chord lists exist, use only those.
+        Otherwise, fall back to built-in options.
+        """
+        if self.custom_chord_lists:
+            return self.custom_chord_lists
+        else:
+            return PRACTICE_OPTIONS
     
     async def serial_monitor_task(self):
         """Background task to continuously monitor serial input"""
         print("[Serial] Monitor task started")
+        
+        # Try to import USB CDC for serial communication
+        try:
+            import sys
+            print(f"[Serial] stdin available: {sys.stdin is not None}")
+        except:
+            pass
+        
         while True:
+            rlist = None
             try:
                 # Check if data is available (non-blocking)
                 rlist, _, _ = select.select([sys.stdin], [], [], 0)
                 if rlist:
-                    char = sys.stdin.read(1)
-                    if char:
+                    print("[Serial] Data available!")  # Debug
+            except Exception as e:
+                # select.select might fail, just continue
+                await asyncio.sleep_ms(50)
+                continue
+            
+            try:
+                if rlist:
+                    # Read all available data (not just one char)
+                    chars_read = 0
+                    while True:
+                        char = sys.stdin.read(1)
+                        if not char:
+                            break
+                        chars_read += 1
                         self.serial_buffer += char
+                        # Check if more data is immediately available
+                        rlist, _, _ = select.select([sys.stdin], [], [], 0)
+                        if not rlist:
+                            break
+                    
+                    if chars_read > 0:
+                        print(f"[Serial] Read {chars_read} chars, buffer: {len(self.serial_buffer)}")
+                    
+                    # Check if we have a complete message (ends with newline)
+                    if '\n' in self.serial_buffer:
+                        message = self.serial_buffer.strip()
+                        self.serial_buffer = ""
                         
-                        # Check if we have a complete message (ends with newline)
-                        if '\n' in self.serial_buffer:
-                            message = self.serial_buffer.strip()
-                            self.serial_buffer = ""
-                            
-                            print(f"[Serial] Received: {message}")
-                            
-                            # Parse the message
-                            if message.startswith("CHORD_JSON|"):
-                                try:
-                                    # Extract JSON data
-                                    json_str = message[11:]  # Remove "CHORD_JSON|" prefix
-                                    import json
-                                    chord_data = json.loads(json_str)
+                        print(f"[Serial] Received message, length: {len(message)} chars")
+                        
+                        # Parse the message
+                        if message.startswith("CHORD_JSON|"):
+                            try:
+                                print("[Serial] Processing JSON upload...")
+                                # Extract JSON data
+                                json_str = message[11:]  # Remove "CHORD_JSON|" prefix
+                                print(f"[Serial] JSON length: {len(json_str)} chars")
+                                import json
+                                chord_data = json.loads(json_str)
+                                
+                                print(f"[Serial] Parsed {len(chord_data)} chord lists")
+                                
+                                # Replace all custom chord lists
+                                self.custom_chord_lists = chord_data
+                                self.save_custom_chord_lists()
+                                
+                                # Signal that menu should be refreshed
+                                self.new_chord_list_uploaded = True
+                                
+                                # Show confirmation on screen
+                                self.tft.fill(self.COLOR_BLACK)
+                                self.tft.text("JSON Uploaded!", 60, 100, self.COLOR_GREEN)
+                                self.tft.text(f"{len(chord_data)} chord lists", 50, 120, self.COLOR_YELLOW)
+                                self.tft.text("saved to file", 65, 140, self.COLOR_WHITE)
+                                self.tft.show()
+                                
+                                # Send acknowledgment
+                                print(f"OK: Saved {len(chord_data)} chord lists to file")
+                            except Exception as e:
+                                print(f"[Serial] Error parsing JSON: {e}")
+                                import sys
+                                sys.print_exception(e)
+                        
+                        elif message.startswith("CHORD_LIST|"):
+                            try:
+                                parts = message.split('|')
+                                if len(parts) >= 4:
+                                    name = parts[1]
+                                    mode = parts[2]
+                                    chords = parts[3].split(',')
                                     
-                                    # Replace all custom chord lists
-                                    self.custom_chord_lists = chord_data
-                                    self.save_custom_chord_lists()
+                                    # Add the chord list
+                                    self.add_custom_chord_list(name, mode, chords)
                                     
                                     # Signal that menu should be refreshed
                                     self.new_chord_list_uploaded = True
                                     
                                     # Send acknowledgment
-                                    print(f"OK: Saved {len(chord_data)} chord lists to file")
-                                except Exception as e:
-                                    print(f"[Serial] Error parsing JSON: {e}")
-                            
-                            elif message.startswith("CHORD_LIST|"):
-                                try:
-                                    parts = message.split('|')
-                                    if len(parts) >= 4:
-                                        name = parts[1]
-                                        mode = parts[2]
-                                        chords = parts[3].split(',')
-                                        
-                                        # Add the chord list
-                                        self.add_custom_chord_list(name, mode, chords)
-                                        
-                                        # Signal that menu should be refreshed
-                                        self.new_chord_list_uploaded = True
-                                        
-                                        # Send acknowledgment
-                                        print(f"OK: Added '{name}' with {len(chords)} chords")
-                                except Exception as e:
-                                    print(f"[Serial] Error parsing: {e}")
+                                    print(f"OK: Added '{name}' with {len(chords)} chords")
+                            except Exception as e:
+                                print(f"[Serial] Error parsing: {e}")
             except Exception as e:
                 print(f"[Serial] Error: {e}")
             
@@ -1863,11 +1935,12 @@ class ChordTrainer:
             selected_chords = await self.show_menu_and_wait_for_selection()
             
             # Set the chord sequence - extract mode if present
-            if len(selected_chords) > 0 and selected_chords[0] in ['R', 'S']:
+            if len(selected_chords) > 0 and selected_chords[0] in ['R', 'S', 'M']:
                 self.randomize_mode = selected_chords[0]
                 self.chord_sequence = selected_chords[1:]
             else:
                 # Empty or special mode (metronome, strum)
+                self.randomize_mode = None
                 self.chord_sequence = selected_chords
             
             self.sequence_mode = True  # Always in sequence mode now
@@ -1885,6 +1958,13 @@ class ChordTrainer:
                     # Show BPM selection menu
                     selected_bpm = await self.show_bpm_menu()
                     result = await self.run_metronome(bpm=selected_bpm)
+                # Check if metronome with pattern (mode 'M')
+                elif self.randomize_mode == 'M':
+                    print("Metronome with pattern selected")
+                    # Show BPM selection menu
+                    selected_bpm = await self.show_bpm_menu()
+                    # chord_sequence contains the pattern
+                    result = await self.run_metronome(bpm=selected_bpm, pattern=self.chord_sequence)
                 # Check if strum practice mode
                 elif self.chord_sequence == ['STRUM']:
                     print("Strum Practice mode selected")
