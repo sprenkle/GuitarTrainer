@@ -254,8 +254,9 @@ class ChordTrainer:
         self.current_chord_index = 0
         self.sequence_mode = len(self.chord_sequence) > 0
         
-        # Custom uploaded chord lists (stored in RAM)
+        # Custom uploaded chord lists (stored persistently)
         self.custom_chord_lists = []
+        self.load_custom_chord_lists()  # Load from file
         
         # USB Serial buffer for receiving chord lists
         self.serial_buffer = ""
@@ -1285,11 +1286,38 @@ class ChordTrainer:
         
         return None
     
+    def save_custom_chord_lists(self):
+        """Save custom chord lists to file"""
+        try:
+            import json
+            with open('custom_chords.json', 'w') as f:
+                json.dump(self.custom_chord_lists, f)
+            print(f"[Storage] Saved {len(self.custom_chord_lists)} custom chord lists")
+        except Exception as e:
+            print(f"[Storage] Error saving chord lists: {e}")
+    
+    def load_custom_chord_lists(self):
+        """Load custom chord lists from file"""
+        try:
+            import json
+            with open('custom_chords.json', 'r') as f:
+                self.custom_chord_lists = json.load(f)
+            print(f"[Storage] Loaded {len(self.custom_chord_lists)} custom chord lists")
+        except OSError:
+            print("[Storage] No saved chord lists found (first run)")
+            self.custom_chord_lists = []
+        except Exception as e:
+            print(f"[Storage] Error loading chord lists: {e}")
+            self.custom_chord_lists = []
+    
     def add_custom_chord_list(self, name, mode, chords):
         """Add a custom chord list to the practice options"""
         # Add to custom lists
         self.custom_chord_lists.append((name, [mode] + chords))
         print(f"Added custom list: {name} ({mode}) - {chords}")
+        
+        # Save to persistent storage
+        self.save_custom_chord_lists()
         
         # Show confirmation on screen
         self.tft.fill(self.COLOR_BLACK)
@@ -1322,7 +1350,26 @@ class ChordTrainer:
                             print(f"[Serial] Received: {message}")
                             
                             # Parse the message
-                            if message.startswith("CHORD_LIST|"):
+                            if message.startswith("CHORD_JSON|"):
+                                try:
+                                    # Extract JSON data
+                                    json_str = message[11:]  # Remove "CHORD_JSON|" prefix
+                                    import json
+                                    chord_data = json.loads(json_str)
+                                    
+                                    # Replace all custom chord lists
+                                    self.custom_chord_lists = chord_data
+                                    self.save_custom_chord_lists()
+                                    
+                                    # Signal that menu should be refreshed
+                                    self.new_chord_list_uploaded = True
+                                    
+                                    # Send acknowledgment
+                                    print(f"OK: Saved {len(chord_data)} chord lists to file")
+                                except Exception as e:
+                                    print(f"[Serial] Error parsing JSON: {e}")
+                            
+                            elif message.startswith("CHORD_LIST|"):
                                 try:
                                     parts = message.split('|')
                                     if len(parts) >= 4:

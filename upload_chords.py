@@ -6,16 +6,19 @@ Requirements:
     pip install pyserial
 
 Usage:
-    python upload_chords.py
+    python upload_chords.py [chord_file.json]
+    
+    If no file is specified, uploads example chord lists.
     
 Note: The Guitar Trainer will receive uploads at any time during operation.
-      If you don't see confirmation messages, the data is still being uploaded
-      and will be processed by the device.
 """
 
 import serial
 import serial.tools.list_ports
 import time
+import json
+import sys
+import os
 
 class ChordUploader:
     def __init__(self):
@@ -73,6 +76,50 @@ class ChordUploader:
         if self.serial and self.serial.is_open:
             self.serial.close()
             print("Disconnected")
+    
+    def upload_json_file(self, json_data):
+        """Upload entire JSON chord list file to device"""
+        if not self.serial or not self.serial.is_open:
+            print("Not connected to device")
+            return False
+        
+        try:
+            # Clear input buffer before sending
+            self.serial.reset_input_buffer()
+            
+            # Convert to compact JSON string
+            json_str = json.dumps(json_data)
+            
+            # Send with protocol marker
+            data = f"CHORD_JSON|{json_str}\n"
+            
+            print(f"Uploading JSON file with {len(json_data)} chord lists...")
+            
+            # Send via serial
+            self.serial.write(data.encode('utf-8'))
+            self.serial.flush()
+            
+            # Wait for acknowledgment (give more time for Pico to process)
+            time.sleep(1.0)
+            
+            # Try to read response multiple times
+            for attempt in range(3):
+                if self.serial.in_waiting > 0:
+                    response = self.serial.read(self.serial.in_waiting).decode('utf-8', errors='ignore').strip()
+                    if 'OK' in response or 'Saved' in response:
+                        print("✓ Upload successful!")
+                        return True
+                    else:
+                        print(f"Response: {response}")
+                        return True
+                time.sleep(0.3)
+            
+            print("Upload sent (no confirmation received)")
+            return True
+            
+        except Exception as e:
+            print(f"Upload failed: {e}")
+            return False
     
     def encode_chord_list(self, name, mode, chords):
         """
@@ -155,6 +202,46 @@ def main():
         print("Guitar Trainer Chord Upload Tool")
         print("="*50)
         
+        # Check if JSON file was provided as argument
+        if len(sys.argv) > 1:
+            json_file = sys.argv[1]
+            if os.path.exists(json_file):
+                print(f"\nLoading chord lists from: {json_file}")
+                try:
+                    with open(json_file, 'r') as f:
+                        chord_data = json.load(f)
+                    
+                    # Validate format
+                    if not isinstance(chord_data, list):
+                        print("Error: JSON file must contain a list of chord lists")
+                        return
+                    
+                    print(f"Found {len(chord_data)} chord lists in file")
+                    for item in chord_data:
+                        name = item[0]
+                        mode = item[1][0]
+                        chords = item[1][1:]
+                        mode_text = "Random" if mode == "R" else "Sequential"
+                        print(f"  - {name} ({mode_text}): {', '.join(chords)}")
+                    
+                    # Upload the entire JSON
+                    uploader.upload_json_file(chord_data)
+                    return
+                    
+                except json.JSONDecodeError as e:
+                    print(f"Error parsing JSON file: {e}")
+                    return
+                except Exception as e:
+                    print(f"Error loading file: {e}")
+                    return
+            else:
+                print(f"Error: File not found: {json_file}")
+                return
+        
+        # No file provided - use example chord lists
+        print("\nNo JSON file specified. Using example chord lists.")
+        print("Usage: python upload_chords.py [chord_file.json]")
+        
         # Example chord lists to upload
         # Format: (name, mode, [chord1, chord2, ...])
         chord_lists = [
@@ -173,12 +260,17 @@ def main():
         print("1-{}: Upload specific list".format(len(chord_lists)))
         print("A: Upload all")
         print("C: Create custom list")
+        print("J: Upload as JSON file")
         print("Q: Quit")
         
         choice = input("\nYour choice: ").strip().upper()
         
         if choice == 'Q':
             return
+        elif choice == 'J':
+            # Upload as JSON file
+            json_data = [(name, [mode] + chords) for name, mode, chords in chord_lists]
+            uploader.upload_json_file(json_data)
         elif choice == 'A':
             uploader.upload_multiple(chord_lists)
         elif choice == 'C':
