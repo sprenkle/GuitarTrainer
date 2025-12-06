@@ -614,20 +614,16 @@ class ChordTrainer:
                         return selected_bpm
     
     async def run_metronome(self, bpm=60, pattern=None):
-        """Run visual metronome mode with chord practice
+        """Run visual metronome mode with strum detection
         
         Args:
-            bpm: Beats per minute (default 60)
+            bpm: Target BPM for reference (displayed only)
             pattern: List of [chord, strum_direction] entries. If None, uses default pattern.
                     Strum direction: 'D'=Down, 'U'=Up, None=Rest
         
         Returns:
-            'menu' if returning to menu, 'practice' if switching to practice mode
+            'menu' if returning to menu
         """
-        beat_interval_ms = int(60000 / bpm)  # Convert BPM to milliseconds
-        beat_num = 0
-        last_beat_time = utime.ticks_ms()
-        
         # Use provided pattern or default
         if pattern is None:
             # Default metronome pattern: each entry is [chord, strum_direction]
@@ -652,8 +648,13 @@ class ChordTrainer:
         pattern_index = 0
         current_chord = metronome_pattern[pattern_index][0]
         
-        print(f"Metronome mode: {bpm} BPM")
-        print("Play 22nd fret to switch mode or return to menu")
+        print(f"Metronome mode (strum detection): {bpm} BPM target")
+        print("Strum to advance to next beat")
+        print("Play 22nd fret to return to menu")
+        
+        # Track last strum time for detecting new strums
+        last_strum_time = 0
+        strum_cooldown_ms = 100  # Minimum time between strum detections
         
         # Create buffer for MIDI messages
         midi_buffer = []
@@ -673,6 +674,9 @@ class ChordTrainer:
         # Start MIDI listener in background
         listener_task = asyncio.create_task(midi_listener())
         
+        # Draw initial display
+        self.draw_metronome_display(metronome_pattern, pattern_index, bpm)
+        
         try:
             while self.connected:
                 # Check if new chord list was uploaded - return to menu
@@ -683,10 +687,10 @@ class ChordTrainer:
                     listener_task.cancel()
                     return 'menu'
                 
-                # Check for menu selection notes
+                # Check for MIDI notes
                 if midi_buffer:
                     note = midi_buffer.pop(0)
-                    print(f"Metronome - Note received: {note}")
+                    current_time = utime.ticks_ms()
                     
                     # Check if it's a 22nd fret note - return to menu
                     if note in SELECTION_NOTES:
@@ -694,193 +698,39 @@ class ChordTrainer:
                         running = False
                         listener_task.cancel()
                         return 'menu'
-                
-                # Check if time for next beat
-                current_time = utime.ticks_ms()
-                time_since_beat = utime.ticks_diff(current_time, last_beat_time)
-                
-                if time_since_beat >= beat_interval_ms:
-                    # Time for next beat
-                    beat_num_index = beat_num % 4  # 0-3 for pattern index
-                    beat_num = (beat_num % 4) + 1  # 1-4 for display
-                    last_beat_time = current_time
                     
-                    # Move to next pattern entry
-                    pattern_index = (pattern_index + 1) % len(metronome_pattern)
-                    current_chord = metronome_pattern[pattern_index][0]
-                    strum_direction = metronome_pattern[pattern_index][1]
+                    # Detect strum based on string and direction
+                    # Get the string number for this note
+                    string_num = None
+                    for string_idx, open_note in enumerate(OPEN_STRING_NOTES):
+                        # Check if note is on this string (within playable range)
+                        if note >= open_note and note <= open_note + 24:  # Up to 24 frets
+                            string_num = string_idx + 1  # String 1-6
+                            break
                     
-                    # Convert strum direction to boolean for display
-                    # 'D'=True (down), 'U'=False (up), None/other=None (rest)
-                    if strum_direction == 'D':
-                        strum_dir_bool = True
-                    elif strum_direction == 'U':
-                        strum_dir_bool = False
-                    else:
-                        strum_dir_bool = None
+                    # Get expected strum direction for current beat
+                    current_strum_dir = metronome_pattern[pattern_index][1]
                     
-                    # Only redraw full display on beat 1, otherwise just update current beat indicator
-                    if beat_num == 1:
-                        # Draw full screen
-                        self.tft.fill(self.COLOR_BLACK)
-                        
-                        # Show BPM at top
-                        self.tft.text(f"{bpm} BPM", 90, 5, self.COLOR_YELLOW)
-                        
-                        # Draw beat squares with chords above and directions below
-                        y_pos = 110
-                        square_size = 35  # Larger squares
-                        spacing = 50  # More space between squares
-                        start_x = 20  # Start further left
-                        
-                        # Show next chord (2 beats ahead)
-                        next_chord_index = (pattern_index + 2) % len(metronome_pattern)
-                        next_chord = metronome_pattern[next_chord_index][0]
-                        chord_x_offset = -5 if len(next_chord) > 1 else 5
-                        self.draw_large_text(next_chord, 90 + chord_x_offset, 40, self.COLOR_YELLOW)
-                        
-                        for i in range(1, 5):
-                            x_pos = start_x + (i - 1) * spacing
-                            
-                            # Get strum for this beat position
-                            display_index = (pattern_index + i - 1) % len(metronome_pattern)
-                            strum_for_beat = metronome_pattern[display_index][1]
-                            
-                            # Convert to boolean for display
-                            if strum_for_beat == 'D':
-                                strum_dir = True
-                            elif strum_for_beat == 'U':
-                                strum_dir = False
-                            else:
-                                strum_dir = None
-                            
-                            # Determine square color based on current beat
-                            if i == beat_num:
-                                # Current beat - always green
-                                color = self.COLOR_GREEN
-                            else:
-                                # Not current beat - always white
-                                color = self.COLOR_WHITE
-                            
-                            # Draw filled square
-                            self.tft.fill_rect(x_pos, y_pos, square_size, square_size, color)
-                            
-                            # Draw beat number inside square in white
-                            self.tft.text(str(i), x_pos + 13, y_pos + 13, self.COLOR_WHITE)
-                            
-                            # Draw strum direction arrow below square - larger
-                            arrow_center_x = x_pos + (square_size // 2)
-                            arrow_y = y_pos + square_size + 10
-                            arrow_length = 18  # Increased from 12
-                            arrow_head_size = 5  # Increased from 3-4
-                            
-                            if strum_dir is True:
-                                # Down arrow - always green - thicker
-                                strum_color = self.COLOR_GREEN
-                                # Vertical line (thicker)
-                                self.tft.vline(arrow_center_x, arrow_y, arrow_length, strum_color)
-                                self.tft.vline(arrow_center_x + 1, arrow_y, arrow_length, strum_color)
-                                # Arrow head (down)
-                                for offset in range(3):
-                                    self.tft.line(arrow_center_x, arrow_y + arrow_length, arrow_center_x - arrow_head_size, arrow_y + arrow_length - arrow_head_size + offset, strum_color)
-                                    self.tft.line(arrow_center_x, arrow_y + arrow_length, arrow_center_x + arrow_head_size, arrow_y + arrow_length - arrow_head_size + offset, strum_color)
-                            elif strum_dir is False:
-                                # Up arrow - always blue - thicker
-                                strum_color = self.COLOR_BLUE
-                                # Vertical line (thicker)
-                                self.tft.vline(arrow_center_x, arrow_y, arrow_length, strum_color)
-                                self.tft.vline(arrow_center_x + 1, arrow_y, arrow_length, strum_color)
-                                # Arrow head (up)
-                                for offset in range(3):
-                                    self.tft.line(arrow_center_x, arrow_y, arrow_center_x - arrow_head_size, arrow_y + arrow_head_size - offset, strum_color)
-                                    self.tft.line(arrow_center_x, arrow_y, arrow_center_x + arrow_head_size, arrow_y + arrow_head_size - offset, strum_color)
-                            else:
-                                # Rest - X mark - always gray - larger and thicker
-                                strum_color = self.tft.color565(100, 100, 100)
-                                x_size = 7  # Increased from 4
-                                for offset in range(3):
-                                    self.tft.line(arrow_center_x - x_size, arrow_y + offset, arrow_center_x + x_size, arrow_y + arrow_length - offset, strum_color)
-                                    self.tft.line(arrow_center_x + x_size, arrow_y + offset, arrow_center_x - x_size, arrow_y + arrow_length - offset, strum_color)
-                    else:
-                        # Just update the square colors for beat indication
-                        y_pos = 110
-                        square_size = 35
-                        spacing = 50
-                        start_x = 20
-                        
-                        # On beat 4, update square 1 with next chord info
-                        if beat_num == 4:
-                            # Clear and redraw square 1 area including chord above
-                            x_pos = start_x
-                            
-                            # Clear area above square 1 for new chord
-                            self.tft.fill_rect(x_pos - 10, y_pos - 70, 55, 65, self.COLOR_BLACK)
-                            
-                            # Get chord for next beat (beat 1)
-                            next_beat_index = (pattern_index + 1) % len(metronome_pattern)
-                            next_chord = metronome_pattern[next_beat_index][0]
-                            chord_x_offset = -5 if len(next_chord) > 1 else 5
-                            self.draw_large_text(next_chord, x_pos + chord_x_offset, y_pos - 50, self.COLOR_ORANGE)
-                            
-                            # Get strum direction for next beat
-                            next_strum = metronome_pattern[next_beat_index][1]
-                            
-                            # Draw square 1 (white since not current beat)
-                            self.tft.fill_rect(x_pos, y_pos, square_size, square_size, self.COLOR_WHITE)
-                            self.tft.text("1", x_pos + 13, y_pos + 13, self.COLOR_WHITE)
-                            
-                            # Draw strum arrow for square 1
-                            arrow_center_x = x_pos + (square_size // 2)
-                            arrow_y = y_pos + square_size + 10
-                            arrow_length = 18
-                            arrow_head_size = 5
-                            
-                            # Clear arrow area first
-                            self.tft.fill_rect(x_pos - 5, arrow_y - 2, square_size + 10, arrow_length + 12, self.COLOR_BLACK)
-                            
-                            if next_strum is True:
-                                # Down arrow - green
-                                strum_color = self.COLOR_GREEN
-                                self.tft.vline(arrow_center_x, arrow_y, arrow_length, strum_color)
-                                self.tft.vline(arrow_center_x + 1, arrow_y, arrow_length, strum_color)
-                                for offset in range(3):
-                                    self.tft.line(arrow_center_x, arrow_y + arrow_length, arrow_center_x - arrow_head_size, arrow_y + arrow_length - arrow_head_size + offset, strum_color)
-                                    self.tft.line(arrow_center_x, arrow_y + arrow_length, arrow_center_x + arrow_head_size, arrow_y + arrow_length - arrow_head_size + offset, strum_color)
-                            elif next_strum is False:
-                                # Up arrow - blue
-                                strum_color = self.COLOR_BLUE
-                                self.tft.vline(arrow_center_x, arrow_y, arrow_length, strum_color)
-                                self.tft.vline(arrow_center_x + 1, arrow_y, arrow_length, strum_color)
-                                for offset in range(3):
-                                    self.tft.line(arrow_center_x, arrow_y, arrow_center_x - arrow_head_size, arrow_y + arrow_head_size - offset, strum_color)
-                                    self.tft.line(arrow_center_x, arrow_y, arrow_center_x + arrow_head_size, arrow_y + arrow_head_size - offset, strum_color)
-                            else:
-                                # Rest - X mark - gray
-                                strum_color = self.tft.color565(100, 100, 100)
-                                x_size = 7
-                                for offset in range(3):
-                                    self.tft.line(arrow_center_x - x_size, arrow_y + offset, arrow_center_x + x_size, arrow_y + arrow_length - offset, strum_color)
-                                    self.tft.line(arrow_center_x + x_size, arrow_y + offset, arrow_center_x - x_size, arrow_y + arrow_length - offset, strum_color)
-                        
-                        for i in range(1, 5):
-                            x_pos = start_x + (i - 1) * spacing
-                            
-                            # Determine square color based on current beat
-                            if i == beat_num:
-                                color = self.COLOR_GREEN
-                            else:
-                                color = self.COLOR_WHITE
-                            
-                            # Draw filled square
-                            self.tft.fill_rect(x_pos, y_pos, square_size, square_size, color)
-                            
-                            # Draw beat number inside square in white
-                            self.tft.text(str(i), x_pos + 13, y_pos + 13, self.COLOR_WHITE)
+                    # Check if strum matches expected direction and string
+                    valid_strum = False
+                    if current_strum_dir == 'D' and (string_num == 1 or string_num == 2):
+                        # Down strum - detect on string 1 (high E)
+                        valid_strum = True
+                    elif current_strum_dir == 'U'  and (string_num == 5 or string_num == 6):
+                        # Up strum - detect on string 6 (low E)
+                        valid_strum = True
                     
-                    self.tft.text("22nd fret string", 55, 190, self.COLOR_ORANGE)
-                    self.tft.text("to change mode", 55, 210, self.COLOR_ORANGE)
-                    
-                    self.tft.show()
+                    # Check cooldown to avoid multiple triggers from same strum
+                    time_since_strum = utime.ticks_diff(current_time, last_strum_time)
+                    if valid_strum and time_since_strum > strum_cooldown_ms:
+                        print(f"Strum detected (string {string_num}, direction {current_strum_dir}) - advancing to next beat")
+                        last_strum_time = current_time
+                        
+                        # Move to next pattern entry
+                        pattern_index = (pattern_index + 1) % len(metronome_pattern)
+                        
+                        # Redraw display with new beat
+                        self.draw_metronome_display(metronome_pattern, pattern_index, bpm)
                 
                 # Small sleep to yield to other tasks
                 await asyncio.sleep_ms(10)
@@ -888,6 +738,126 @@ class ChordTrainer:
         finally:
             running = False
             listener_task.cancel()
+    
+    def draw_metronome_display(self, metronome_pattern, pattern_index, bpm):
+        """Draw the two-square metronome display
+        
+        Args:
+            metronome_pattern: List of [chord, strum_direction] entries
+            pattern_index: Current position in pattern
+            bpm: BPM to display
+        """
+        # Clear screen and redraw
+        self.tft.fill(self.COLOR_BLACK)
+        
+        # Show BPM at top
+        self.tft.text(f"{bpm} BPM", 90, 10, self.COLOR_YELLOW)
+        
+        # Two-square scrolling view: Next beat (left) and Current beat (right)
+        square_size = 70  # Larger squares
+        spacing = 30  # Space between squares
+        start_x = 35  # Center the two squares
+        y_pos = 90
+        
+        # LEFT SQUARE - Next beat (what's coming up)
+        next_index = (pattern_index + 1) % len(metronome_pattern)
+        next_chord_name = metronome_pattern[next_index][0]
+        next_strum = metronome_pattern[next_index][1]
+        
+        left_x = start_x
+        
+        # Draw chord name above left square
+        chord_x_offset = -10 if len(next_chord_name) > 2 else 0
+        self.draw_large_text(next_chord_name, left_x + 10 + chord_x_offset, y_pos - 55, self.COLOR_YELLOW)
+        
+        # Draw white outlined square (next beat)
+        self.tft.rect(left_x, y_pos, square_size, square_size, self.COLOR_WHITE)
+        self.tft.rect(left_x + 1, y_pos + 1, square_size - 2, square_size - 2, self.COLOR_WHITE)
+        
+        # Draw strum direction arrow below left square
+        arrow_center_x = left_x + (square_size // 2)
+        arrow_y = y_pos + square_size + 15
+        arrow_length = 25
+        arrow_head_size = 8
+        
+        if next_strum == 'D':
+            # Down arrow - green
+            strum_color = self.COLOR_GREEN
+            self.tft.vline(arrow_center_x, arrow_y, arrow_length, strum_color)
+            self.tft.vline(arrow_center_x + 1, arrow_y, arrow_length, strum_color)
+            self.tft.vline(arrow_center_x - 1, arrow_y, arrow_length, strum_color)
+            for offset in range(4):
+                self.tft.line(arrow_center_x, arrow_y + arrow_length, arrow_center_x - arrow_head_size, arrow_y + arrow_length - arrow_head_size + offset, strum_color)
+                self.tft.line(arrow_center_x, arrow_y + arrow_length, arrow_center_x + arrow_head_size, arrow_y + arrow_length - arrow_head_size + offset, strum_color)
+        elif next_strum == 'U':
+            # Up arrow - blue
+            strum_color = self.COLOR_BLUE
+            self.tft.vline(arrow_center_x, arrow_y, arrow_length, strum_color)
+            self.tft.vline(arrow_center_x + 1, arrow_y, arrow_length, strum_color)
+            self.tft.vline(arrow_center_x - 1, arrow_y, arrow_length, strum_color)
+            for offset in range(4):
+                self.tft.line(arrow_center_x, arrow_y, arrow_center_x - arrow_head_size, arrow_y + arrow_head_size - offset, strum_color)
+                self.tft.line(arrow_center_x, arrow_y, arrow_center_x + arrow_head_size, arrow_y + arrow_head_size - offset, strum_color)
+        else:
+            # Rest - X mark - gray
+            strum_color = self.tft.color565(150, 150, 150)
+            x_size = 10
+            for offset in range(4):
+                self.tft.line(arrow_center_x - x_size, arrow_y + offset, arrow_center_x + x_size, arrow_y + arrow_length - offset, strum_color)
+                self.tft.line(arrow_center_x + x_size, arrow_y + offset, arrow_center_x - x_size, arrow_y + arrow_length - offset, strum_color)
+        
+        # RIGHT SQUARE - Current beat (what you should play now)
+        current_index = pattern_index
+        current_chord_name = metronome_pattern[current_index][0]
+        current_strum = metronome_pattern[current_index][1]
+        
+        right_x = left_x + square_size + spacing
+        
+        # Draw chord name above right square
+        chord_x_offset = -10 if len(current_chord_name) > 2 else 0
+        self.draw_large_text(current_chord_name, right_x + 10 + chord_x_offset, y_pos - 55, self.COLOR_GREEN)
+        
+        # Draw green filled square (current beat)
+        self.tft.fill_rect(right_x, y_pos, square_size, square_size, self.COLOR_GREEN)
+        
+        # Draw strum direction arrow below right square
+        arrow_center_x = right_x + (square_size // 2)
+        arrow_y = y_pos + square_size + 15
+        arrow_length = 25
+        arrow_head_size = 8
+        
+        if current_strum == 'D':
+            # Down arrow - white
+            strum_color = self.COLOR_WHITE
+            self.tft.vline(arrow_center_x, arrow_y, arrow_length, strum_color)
+            self.tft.vline(arrow_center_x + 1, arrow_y, arrow_length, strum_color)
+            self.tft.vline(arrow_center_x - 1, arrow_y, arrow_length, strum_color)
+            # Arrow head (down)
+            for offset in range(4):
+                self.tft.line(arrow_center_x, arrow_y + arrow_length, arrow_center_x - arrow_head_size, arrow_y + arrow_length - arrow_head_size + offset, strum_color)
+                self.tft.line(arrow_center_x, arrow_y + arrow_length, arrow_center_x + arrow_head_size, arrow_y + arrow_length - arrow_head_size + offset, strum_color)
+        elif current_strum == 'U':
+            # Up arrow - white
+            strum_color = self.COLOR_WHITE
+            self.tft.vline(arrow_center_x, arrow_y, arrow_length, strum_color)
+            self.tft.vline(arrow_center_x + 1, arrow_y, arrow_length, strum_color)
+            self.tft.vline(arrow_center_x - 1, arrow_y, arrow_length, strum_color)
+            # Arrow head (up)
+            for offset in range(4):
+                self.tft.line(arrow_center_x, arrow_y, arrow_center_x - arrow_head_size, arrow_y + arrow_head_size - offset, strum_color)
+                self.tft.line(arrow_center_x, arrow_y, arrow_center_x + arrow_head_size, arrow_y + arrow_head_size - offset, strum_color)
+        else:
+            # Rest - X mark - gray
+            strum_color = self.tft.color565(150, 150, 150)
+            x_size = 10
+            for offset in range(4):
+                self.tft.line(arrow_center_x - x_size, arrow_y + offset, arrow_center_x + x_size, arrow_y + arrow_length - offset, strum_color)
+                self.tft.line(arrow_center_x + x_size, arrow_y + offset, arrow_center_x - x_size, arrow_y + arrow_length - offset, strum_color)
+        
+        # Instructions at bottom
+        self.tft.text("Strum to advance", 50, 200, self.COLOR_ORANGE)
+        
+        self.tft.show()
     
     async def run_strum_metronome(self, bpm=60):
         """Run visual metronome mode that advances on strum detection
