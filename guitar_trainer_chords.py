@@ -2062,8 +2062,11 @@ class ChordTrainer:
                         result = await self.handle_midi()
                     
                     # Any result returns to menu (outer loop continues)
+                    print(f"Practice session ended with result: {result}")
                 except Exception as e:
-                    print(f"Error: {e}")
+                    print(f"Error during practice: {e}")
+                    import sys
+                    sys.print_exception(e)
                     # Check if connection was lost
                     if not self.connected or not self.midi_characteristic:
                         print("Connection lost, returning to scan...")
