@@ -3,7 +3,7 @@
 import asyncio
 import urandom
 import utime
-from config import SELECTION_NOTES, CHORD_MIDI_NOTES
+from config import SELECTION_NOTES, CHORD_MIDI_NOTES, Colors
 from metronome import Metronome
 from chord_detector import ChordDetector
 
@@ -34,15 +34,13 @@ class RegularPracticeMode(PracticeMode):
     
     async def run(self):
         """Run regular chord practice"""
+        print("=== PRACTICE MODE STARTING ===")
         if not self.ble.connected or not self.ble.midi_characteristic:
             print("Not connected")
             return 'menu'
         
         print("Starting regular chord practice...")
-        import sys
-        sys.stdout.flush()
         print(f"Sequence: {self.chord_sequence}")
-        sys.stdout.flush()
         
         self.detector.reset()
         last_note = None
@@ -56,10 +54,18 @@ class RegularPracticeMode(PracticeMode):
         time_last_chord = 0
         
         # Display the first target chord
+        target_chord = self.chord_sequence[self.current_chord_index]
+        print(f"=== DISPLAY CHORD: {target_chord} ===")
+        
         if self.chord_display:
-            target_chord = self.chord_sequence[self.current_chord_index]
-            print(f"Displaying target chord: {target_chord}")
             self.chord_display.display_target_chord(target_chord)
+        else:
+            # Fallback display if chord_display not available
+            self.display.clear()
+            self.display.draw_large_text(target_chord, 70, 100, Colors.YELLOW)
+            self.display.text("Strum & hold", 50, 150, Colors.WHITE)
+            self.display.text("22nd=back", 70, 220, Colors.ORANGE)
+            self.display.show()
         
         async def timeout_handler():
             """Handle timeout - reset strum if no completion"""
@@ -72,9 +78,7 @@ class RegularPracticeMode(PracticeMode):
         
         try:
             while self.ble.connected:
-                import sys
-                print("DEBUG Practice: Top of loop, waiting for MIDI...")
-                sys.stdout.flush()
+                print("Waiting for MIDI...")
                 # Check for new chord list upload
                 if self.new_chord_list_uploaded:
                     self.new_chord_list_uploaded = False
@@ -82,35 +86,31 @@ class RegularPracticeMode(PracticeMode):
                 
                 # Wait for MIDI data
                 try:
-                    print("DEBUG Practice: Calling wait_for_midi...")
-                    sys.stdout.flush()
                     data = await self.ble.wait_for_midi(0.5)
-                    print(f"DEBUG Practice: wait_for_midi returned: {data}")
-                    sys.stdout.flush()
+                    if data:
+                        print(f"Got MIDI: {data}")
                 except asyncio.TimeoutError:
-                    print("DEBUG Practice: TimeoutError from wait_for_midi")
-                    continue
+                    pass
                 
                 if not data:
-                    print("DEBUG Practice: No data received")
                     continue
                 
-                print(f"DEBUG Practice: Parsing MIDI data: {data}")
+                print(f"Parsing MIDI: {data}")
                 msg = self._parse_midi(data)
-                print(f"DEBUG Practice: Parsed message: {msg}")
+                print(f"Parsed: {msg}")
                 
                 if msg and msg[0] == 'note_on':
                     note = msg[1]
-                    print(f"Practice Mode: Note On: {note}")
+                    print(f"Note On: {note}")
                     
                     # Check for menu trigger (86 or 81)
                     if note in [86, 81]:
-                        print(f"Menu trigger detected (note {note}) - returning to menu...")
+                        print(f"Menu trigger detected")
                         return 'menu'
                     
                     # Check time difference FIRST before processing
                     if utime.ticks_diff(utime.ticks_ms(), time_last_chord) > 500:
-                        print("Resetting due to time difference")
+                        print("Time reset")
                         started = False
                         notes_hit = False
                         self.detector.reset()
@@ -120,13 +120,11 @@ class RegularPracticeMode(PracticeMode):
                     
                     # Add note to detector
                     string_num = self.detector.add_note(note)
-                    print(f"Practice Mode: detector.add_note returned string_num={string_num}")
+                    print(f"String: {string_num}")
                     if string_num is None:
-                        print("Practice Mode: string_num is None, continuing")
                         continue
                     
                     if note == last_note:
-                        print("Practice Mode: duplicate note, continuing")
                         continue
                     
                     last_note = note
@@ -134,7 +132,7 @@ class RegularPracticeMode(PracticeMode):
                     # Start strum detection
                     if not started:
                         if string_num == 5 or string_num == 0:
-                            print('Started strum!')
+                            print(f'Strum started on string {string_num}')
                             started = True
                             strum_start_time = utime.ticks_ms()
                             up = (string_num == 0)
@@ -145,12 +143,14 @@ class RegularPracticeMode(PracticeMode):
                     
                     # Check if strum completed
                     if up and string_num == 5:
+                        print(f'Strum completed (up)')
                         started = False
                         notes_hit = True
                         if timeout_task is not None:
                             timeout_task.cancel()
                             timeout_task = None
                     elif not up and string_num == 0:
+                        print(f'Strum completed (down)')
                         started = False
                         notes_hit = True
                         if timeout_task is not None:
@@ -185,17 +185,24 @@ class RegularPracticeMode(PracticeMode):
         target_chord = self.chord_sequence[self.current_chord_index]
         is_correct, matching, missing, extra = self.detector.detect_chord(target_chord)
         
-        print(f"Target: {target_chord}, Correct: {is_correct}")
+        played_notes = self.detector.get_played_notes()
+        print(f">>> Target: {target_chord}, Played: {played_notes}, Correct: {is_correct}")
+        if not is_correct:
+            print(f"    Missing: {missing}, Extra: {extra}")
         
         if is_correct:
-            self.display.show_success(f"{target_chord} Correct!")
+            print(f">>> SUCCESS! {target_chord} Correct!")
+            if self.chord_display:
+                self.chord_display.display_correct_chord(target_chord)
+            else:
+                self.display.show_success(f"{target_chord} Correct!")
             await asyncio.sleep(0.5)
             
             self.current_chord_index += 1
             
             if self.current_chord_index >= len(self.chord_sequence):
                 if self.randomize_mode == 'R':
-                    print("Sequence complete! Randomizing...")
+                    print(">>> Sequence complete! Randomizing...")
                     shuffled = list(self.chord_sequence)
                     n = len(shuffled)
                     for i in range(n - 1, 0, -1):
@@ -206,10 +213,18 @@ class RegularPracticeMode(PracticeMode):
                 self.current_chord_index = 0
         else:
             print(f"Wrong! Expected {target_chord}")
+            if self.chord_display:
+                self.chord_display.display_wrong_chord("???", target_chord)
         
         # Display next chord
         next_chord = self.chord_sequence[self.current_chord_index]
-        self.display.display_target_chord(next_chord)
+        if self.chord_display:
+            self.chord_display.display_target_chord(next_chord)
+        else:
+            self.display.clear()
+            self.display.draw_large_text(next_chord, 70, 100, Colors.YELLOW)
+            self.display.text("Strum & hold", 50, 150, Colors.WHITE)
+            self.display.show()
     
     def _parse_midi(self, data):
         """Parse MIDI message"""

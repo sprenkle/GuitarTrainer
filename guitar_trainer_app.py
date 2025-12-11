@@ -47,14 +47,17 @@ class GuitarTrainerApp:
                 try:
                     print("Showing practice menu...")
                     selected_chords = await self.menu.show_menu_and_wait_for_selection()
+                    print(f"Menu returned: {selected_chords}, type: {type(selected_chords)}")
                     
                     # Set the chord sequence
                     if selected_chords and len(selected_chords) > 0 and selected_chords[0] in ['R', 'S', 'M']:
                         self.randomize_mode = selected_chords[0]
                         self.chord_sequence = selected_chords[1:]
+                        print(f"Mode with prefix: mode={self.randomize_mode}, chords={self.chord_sequence}")
                     else:
                         self.randomize_mode = None
                         self.chord_sequence = selected_chords if selected_chords else []
+                        print(f"Direct chord list: chords={self.chord_sequence}")
                     
                     self.current_chord_index = 0
                     self.serial.new_chord_list_uploaded = False

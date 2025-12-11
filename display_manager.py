@@ -8,49 +8,30 @@ class DisplayManager:
     
     def __init__(self, tft):
         self.tft = tft
-        # Use built-in font by default (don't set a custom font)
-        # Large font will be set when needed for special displays
+        # Set large font for the entire display (like original code did)
+        self.tft.set_font(large_font)
         Colors.initialize(tft)
         print(f"Colors initialized: WHITE={Colors.WHITE}, BLACK={Colors.BLACK}")
     
     def clear(self):
         """Clear the display"""
-        print("Calling clear()...")
-        try:
-            self.tft.fill(Colors.BLACK)
-            print("clear() successful")
-        except Exception as e:
-            print(f"clear() error: {e}")
+        self.tft.fill(Colors.BLACK)
     
     def show(self):
         """Update the display"""
-        print(f"Calling display.show()...")
-        try:
-            self.tft.show()
-            print("show() successful")
-        except Exception as e:
-            print(f"show() error: {e}")
-            import traceback
-            traceback.print_exc()
+        self.tft.show()
     
     def text(self, text, x, y, color=None):
-        """Draw text on display"""
+        """Draw text on display - uses large font set at init"""
         if color is None:
             color = Colors.WHITE
-        if color is None:
-            print(f"WARNING: Color is None for text '{text}'")
-        else:
-            self.tft.text(text, x, y, color)
+        self.tft.text(text, x, y, color)
     
     def draw_large_text(self, text, x, y, color):
         """Draw large text using the font"""
         if color is None:
             color = Colors.WHITE
-        # Set font for large text
-        self.tft.set_font(large_font)
         self.tft.draw_text(text, x, y, color)
-        # Reset to no font (for regular FrameBuffer text)
-        self.tft.set_font(None)
     
     def fill_rect(self, x, y, width, height, color):
         """Draw filled rectangle"""
