@@ -1,6 +1,6 @@
 [
   ["Country Basic", ["R", "G", "C", "D", "Em"]],
-  ["Classic Rock", ["R", "A", "D", "E", "G"]],
-  ["Folk Songs", ["S", "C", "Am", "F", "G"]],
+  ["Horse NN", ["S", "Em", "D6/9"]],
+  ["Landslide", ["R", "G", "C", "G/B", "Am7", "Am", "D7/F#", "Em"]],
   ["Horse With NN", ["M", ["Em", "D"], ["Em", "D"], ["Em", "U"], ["Em", "U"], ["Em", "D"], ["Em", "U"], ["D6/9", "D"], ["D6/9", "D"], ["D6/9", "U"], ["D6/9", "U"], ["D6/9", "D"], ["D6/9", "U"]]]
 ]

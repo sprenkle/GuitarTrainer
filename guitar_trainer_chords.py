@@ -70,6 +70,10 @@ CHORD_MIDI_NOTES = {
     'Gm':  [67, 59, 55, 50, 47, 43],   # G4, B3, G3, D3, B2, G2
     'G7':  [65, 59, 55, 50, 47, 43],   # F4, B3, G3, D3, B2, G2
     'D6/9':  [64, 59, 55, 50, 47, 42], 
+    'G/B':  [64, 59, 55, 50, 47, 42], 
+    'Am7':  [64, 59, 55, 50, 47, 42], 
+    'Am':  [64, 59, 55, 50, 47, 42], 
+    'D7/F#':  [64, 59, 55, 50, 47, 42], 
 }
 
 # Practice options for menu
@@ -418,9 +422,14 @@ class ChordTrainer:
                 fret_x = start_x + (fret_num * fret_width) - (fret_width // 2)
                 self.tft.fill_rect(fret_x - 3, string_y - 3, 7, 7, highlight_color)
     
-    def draw_played_notes_overlay(self, played_notes):
-        """Draw red dots over the fretboard showing where user played"""
-        print(f"draw_played_notes_overlay called with notes: {played_notes}")
+    def draw_played_notes_overlay(self, played_notes, strum_direction=None):
+        """Draw colored dots over the fretboard showing where user played
+        
+        Args:
+            played_notes: Set of MIDI notes that were played
+            strum_direction: 'D' for down (white), 'U' for up (blue), None for red
+        """
+        print(f"draw_played_notes_overlay called with notes: {played_notes}, direction: {strum_direction}")
         
         if not played_notes:
             print("No notes to draw")
@@ -430,6 +439,14 @@ class ChordTrainer:
         start_y = 100
         string_spacing = 16
         fret_width = 40
+        
+        # Determine color based on strum direction
+        if strum_direction == 'D':
+            note_color = self.COLOR_WHITE  # Down strum = white
+        elif strum_direction == 'U':
+            note_color = self.COLOR_BLUE   # Up strum = blue
+        else:
+            note_color = self.COLOR_RED    # No direction = red (error)
         
         # For each played note, find the best string to show it on (lowest fret position within 0-4)
         for note in played_notes:
@@ -446,19 +463,19 @@ class ChordTrainer:
                             best_string = string_num
                             best_fret = fret_num
             
-            # Draw the red marker on the best string
+            # Draw the marker on the best string
             if best_string is not None and best_fret is not None:
                 #print(f"Drawing note {note} on string {best_string}, fret {best_fret}")
                 # String 1 at top (y=0), string 6 at bottom (y=5)
                 string_y = start_y + ((best_string - 1) * string_spacing)
                 
                 if best_fret == 0:
-                    # Open string - draw red O
-                    self.tft.text("O", start_x - 18, string_y - 4, self.COLOR_RED)
+                    # Open string - draw O
+                    self.tft.text("O", start_x - 18, string_y - 4, note_color)
                 else:
-                    # Fretted note - draw smaller red square (6x6)
+                    # Fretted note - draw smaller square (6x6)
                     fret_x = start_x + (best_fret * fret_width) - (fret_width // 2)
-                    self.tft.fill_rect(fret_x - 3, string_y - 3, 6, 6, self.COLOR_RED)
+                    self.tft.fill_rect(fret_x - 3, string_y - 3, 6, 6, note_color)
             else:
                 print(f"Note {note} not within frets 0-4 on any string")
     
@@ -506,9 +523,13 @@ class ChordTrainer:
         
         self.tft.show()
     
-    def display_wrong_chord(self, played_chord, played_notes, target_chord):
-        """Display when wrong chord is played - show target in orange, played in red"""
-        print(f"display_wrong_chord called: played={played_chord}, notes={played_notes}, target={target_chord}")
+    def display_wrong_chord(self, played_chord, played_notes, target_chord, strum_direction=None):
+        """Display when wrong chord is played - show target in orange, played with color based on direction
+        
+        Args:
+            strum_direction: 'D' for down (white), 'U' for up (blue), None for red
+        """
+        print(f"display_wrong_chord called: played={played_chord}, notes={played_notes}, target={target_chord}, direction={strum_direction}")
         
         # Clear the screen completely
         self.tft.fill(self.COLOR_BLACK)
@@ -548,9 +569,9 @@ class ChordTrainer:
         # Draw target chord with color-coded strings
         self.draw_chord_fretboard(target_chord, self.COLOR_ORANGE, string_colors)
         
-        # Overlay played notes in red
-        print(f"Drawing played notes overlay with {len(played_notes)} notes")
-        self.draw_played_notes_overlay(played_notes)
+        # Overlay played notes with color based on strum direction
+        print(f"Drawing played notes overlay with {len(played_notes)} notes, direction: {strum_direction}")
+        self.draw_played_notes_overlay(played_notes, strum_direction)
         
         self.tft.show()
     
@@ -652,13 +673,18 @@ class ChordTrainer:
         print("Strum to advance to next beat")
         print("Play 22nd fret to return to menu")
         
-        # Track last strum time for detecting new strums
+        # Track timing and strum detection
         last_strum_time = 0
         strum_cooldown_ms = 100  # Minimum time between strum detections
+        pattern_start_time = utime.ticks_ms()  # When pattern started
+        beat_interval_ms = int(60000 / bpm)  # Time per beat in ms
         
         # Create buffer for MIDI messages
         midi_buffer = []
         running = True
+        
+        # Shared state for metronome beat indicator
+        metronome_state = {'beat_white': True, 'last_beat_time': utime.ticks_ms()}
         
         async def midi_listener():
             """Background task to listen for MIDI"""
@@ -671,12 +697,33 @@ class ChordTrainer:
                 except Exception as e:
                     await asyncio.sleep_ms(10)
         
-        # Start MIDI listener in background
+        async def metronome_ticker():
+            """Background task to update metronome beat indicator"""
+            while running:
+                current_time = utime.ticks_ms()
+                elapsed_since_beat = utime.ticks_diff(current_time, metronome_state['last_beat_time'])
+                
+                # Toggle white/black based on beat timing
+                # White for first half of beat, black for second half
+                if elapsed_since_beat > beat_interval_ms:
+                    metronome_state['last_beat_time'] = current_time
+                    metronome_state['beat_white'] = True
+                elif elapsed_since_beat > beat_interval_ms // 2:
+                    metronome_state['beat_white'] = False
+                else:
+                    metronome_state['beat_white'] = True
+                
+                await asyncio.sleep_ms(20)  # Update 50 times per second
+        
+        # Start background tasks
         listener_task = asyncio.create_task(midi_listener())
+        ticker_task = asyncio.create_task(metronome_ticker())
         
         # Draw initial display
-        self.draw_metronome_display(metronome_pattern, pattern_index, bpm)
-        
+        self.draw_metronome_display(metronome_pattern, pattern_index, bpm, metronome_state)
+        last_string_num = 0  # To track strum direction
+        string_int = 0
+        last_display_update = utime.ticks_ms()
         try:
             while self.connected:
                 # Check if new chord list was uploaded - return to menu
@@ -685,12 +732,22 @@ class ChordTrainer:
                     self.new_chord_list_uploaded = False
                     running = False
                     listener_task.cancel()
+                    ticker_task.cancel()
                     return 'menu'
                 
-                # Check for MIDI notes
+                # Only redraw the display periodically to show the beat timing visually
+                # but don't auto-advance the pattern_index - let strum detect do that
+                current_time = utime.ticks_ms()
+                if utime.ticks_diff(current_time, last_display_update) >= 50:  # Redraw every 50ms for smooth metronome
+                    self.draw_metronome_display(metronome_pattern, pattern_index, bpm, metronome_state)
+                    last_display_update = current_time
+                if utime.ticks_diff(current_time, last_display_update) >= 50:  # Redraw every 50ms for smooth metronome
+                    self.draw_metronome_display(metronome_pattern, pattern_index, bpm, metronome_state)
+                    last_display_update = current_time
+                
+                # Check for MIDI notes and advance pattern on valid strum
                 if midi_buffer:
                     note = midi_buffer.pop(0)
-                    current_time = utime.ticks_ms()
                     
                     # Check if it's a 22nd fret note - return to menu
                     if note in SELECTION_NOTES:
@@ -699,38 +756,50 @@ class ChordTrainer:
                         listener_task.cancel()
                         return 'menu'
                     
-                    # Detect strum based on string and direction
-                    # Get the string number for this note
-                    string_num = None
-                    for string_idx, open_note in enumerate(OPEN_STRING_NOTES):
-                        # Check if note is on this string (within playable range)
-                        if note >= open_note and note <= open_note + 24:  # Up to 24 frets
-                            string_num = string_idx + 1  # String 1-6
-                            break
+                    # Check for valid strum on non-menu notes
+                    current_time = utime.ticks_ms()
+                    time_since_last_strum = utime.ticks_diff(current_time, last_strum_time)
                     
-                    # Get expected strum direction for current beat
-                    current_strum_dir = metronome_pattern[pattern_index][1]
-                    
-                    # Check if strum matches expected direction and string
-                    valid_strum = False
-                    if current_strum_dir == 'D' and (string_num == 1 or string_num == 2):
-                        # Down strum - detect on string 1 (high E)
-                        valid_strum = True
-                    elif current_strum_dir == 'U'  and (string_num == 5 or string_num == 6):
-                        # Up strum - detect on string 6 (low E)
-                        valid_strum = True
-                    
-                    # Check cooldown to avoid multiple triggers from same strum
-                    time_since_strum = utime.ticks_diff(current_time, last_strum_time)
-                    if valid_strum and time_since_strum > strum_cooldown_ms:
-                        print(f"Strum detected (string {string_num}, direction {current_strum_dir}) - advancing to next beat")
-                        last_strum_time = current_time
+                    # Allow strum if enough time has passed (debounce)
+                    if time_since_last_strum >= strum_cooldown_ms:
+                        # Get the string number for this note
+                        string_num = None
+                        for string_idx, open_note in enumerate(OPEN_STRING_NOTES):
+                            # Check if note is on this string (within playable range)
+                            if note >= open_note and note <= open_note + 24:  # Up to 24 frets
+                                string_num = string_idx + 1  # String 1-6
+                                break
                         
-                        # Move to next pattern entry
-                        pattern_index = (pattern_index + 1) % len(metronome_pattern)
+                        if string_num is not None:
+                            string_int = string_num
+                        else:
+                            string_int = last_string_num
                         
-                        # Redraw display with new beat
-                        self.draw_metronome_display(metronome_pattern, pattern_index, bpm)
+                        # Get expected strum direction for current beat
+                        current_strum_dir = metronome_pattern[pattern_index][1]
+                        
+                        # Check if strum matches expected direction
+                        valid_strum = False
+                        if current_strum_dir == 'D' and string_int < last_string_num:
+                            # Down strum - detect on lower string number (higher pitch)
+                            valid_strum = True
+                        elif current_strum_dir == 'U' and string_int > last_string_num:
+                            # Up strum - detect on higher string number (lower pitch)
+                            valid_strum = True
+                        elif current_strum_dir not in ['D', 'U']:
+                            # Rest beat - advance anyway
+                            valid_strum = True
+                        
+                        print(f"Metronome - Note on string {string_int}, Last: {last_string_num}, Dir: {current_strum_dir}, Valid: {valid_strum}")
+                        
+                        if valid_strum:
+                            # Advance to next beat on valid strum
+                            pattern_index = (pattern_index + 1) % len(metronome_pattern)
+                            print(f"Strum detected! Advanced to beat {pattern_index}")
+                            last_strum_time = current_time
+                            self.draw_metronome_display(metronome_pattern, pattern_index, bpm, metronome_state)
+                        
+                        last_string_num = string_int
                 
                 # Small sleep to yield to other tasks
                 await asyncio.sleep_ms(10)
@@ -738,23 +807,28 @@ class ChordTrainer:
         finally:
             running = False
             listener_task.cancel()
+            ticker_task.cancel()
     
-    def draw_metronome_display(self, metronome_pattern, pattern_index, bpm):
-        """Draw the two-square metronome display
+    def draw_metronome_display(self, metronome_pattern, pattern_index, bpm, metronome_state=None):
+        """Draw the two-square metronome display with metronome beat indicator
         
         Args:
             metronome_pattern: List of [chord, strum_direction] entries
             pattern_index: Current position in pattern
             bpm: BPM to display
+            metronome_state: Dict with 'beat_white' state for metronome indicator
         """
+        if metronome_state is None:
+            metronome_state = {'beat_white': True}
+        
         # Clear screen and redraw
         self.tft.fill(self.COLOR_BLACK)
         
         # Show BPM at top
         self.tft.text(f"{bpm} BPM", 90, 10, self.COLOR_YELLOW)
         
-        # Two-square scrolling view: Next beat (left) and Current beat (right)
-        square_size = 70  # Larger squares
+        # Two-square display
+        square_size = 70  # Fixed size
         spacing = 30  # Space between squares
         start_x = 35  # Center the two squares
         y_pos = 90
@@ -770,9 +844,17 @@ class ChordTrainer:
         chord_x_offset = -10 if len(next_chord_name) > 2 else 0
         self.draw_large_text(next_chord_name, left_x + 10 + chord_x_offset, y_pos - 55, self.COLOR_YELLOW)
         
-        # Draw white outlined square (next beat)
-        self.tft.rect(left_x, y_pos, square_size, square_size, self.COLOR_WHITE)
-        self.tft.rect(left_x + 1, y_pos + 1, square_size - 2, square_size - 2, self.COLOR_WHITE)
+        # Draw outlined square for next beat - color based on strum direction
+        if next_strum == 'D':
+            left_square_color = self.COLOR_GREEN  # Down = green outline
+        elif next_strum == 'U':
+            left_square_color = self.COLOR_BLUE   # Up = blue outline
+        else:
+            left_square_color = self.tft.color565(150, 150, 150)  # Rest = gray outline
+        
+        # Dim the next square slightly since it's not current
+        self.tft.rect(left_x, y_pos, square_size, square_size, left_square_color)
+        self.tft.rect(left_x + 1, y_pos + 1, square_size - 2, square_size - 2, left_square_color)
         
         # Draw strum direction arrow below left square
         arrow_center_x = left_x + (square_size // 2)
@@ -817,8 +899,26 @@ class ChordTrainer:
         chord_x_offset = -10 if len(current_chord_name) > 2 else 0
         self.draw_large_text(current_chord_name, right_x + 10 + chord_x_offset, y_pos - 55, self.COLOR_GREEN)
         
-        # Draw green filled square (current beat)
-        self.tft.fill_rect(right_x, y_pos, square_size, square_size, self.COLOR_GREEN)
+        # Get base color for current beat
+        if current_strum == 'D':
+            base_color = self.COLOR_GREEN  # Down = green
+        elif current_strum == 'U':
+            base_color = self.COLOR_BLUE   # Up = blue
+        else:
+            base_color = self.tft.color565(150, 150, 150)  # Rest = gray
+        
+        # Draw filled square for current beat - solid color
+        self.tft.fill_rect(right_x, y_pos, square_size, square_size, base_color)
+        
+        # Draw smaller inner square that blinks white/black with metronome
+        inner_size = 30
+        inner_offset = (square_size - inner_size) // 2
+        inner_x = right_x + inner_offset
+        inner_y = y_pos + inner_offset
+        
+        # Inner square color: white or black based on metronome beat
+        inner_color = self.COLOR_WHITE if metronome_state['beat_white'] else self.COLOR_BLACK
+        self.tft.fill_rect(inner_x, inner_y, inner_size, inner_size, inner_color)
         
         # Draw strum direction arrow below right square
         arrow_center_x = right_x + (square_size // 2)
@@ -827,8 +927,8 @@ class ChordTrainer:
         arrow_head_size = 8
         
         if current_strum == 'D':
-            # Down arrow - white
-            strum_color = self.COLOR_WHITE
+            # Down arrow - green (matches box color)
+            strum_color = self.COLOR_GREEN
             self.tft.vline(arrow_center_x, arrow_y, arrow_length, strum_color)
             self.tft.vline(arrow_center_x + 1, arrow_y, arrow_length, strum_color)
             self.tft.vline(arrow_center_x - 1, arrow_y, arrow_length, strum_color)
@@ -837,8 +937,8 @@ class ChordTrainer:
                 self.tft.line(arrow_center_x, arrow_y + arrow_length, arrow_center_x - arrow_head_size, arrow_y + arrow_length - arrow_head_size + offset, strum_color)
                 self.tft.line(arrow_center_x, arrow_y + arrow_length, arrow_center_x + arrow_head_size, arrow_y + arrow_length - arrow_head_size + offset, strum_color)
         elif current_strum == 'U':
-            # Up arrow - white
-            strum_color = self.COLOR_WHITE
+            # Up arrow - blue (matches box color)
+            strum_color = self.COLOR_BLUE
             self.tft.vline(arrow_center_x, arrow_y, arrow_length, strum_color)
             self.tft.vline(arrow_center_x + 1, arrow_y, arrow_length, strum_color)
             self.tft.vline(arrow_center_x - 1, arrow_y, arrow_length, strum_color)
@@ -847,7 +947,7 @@ class ChordTrainer:
                 self.tft.line(arrow_center_x, arrow_y, arrow_center_x - arrow_head_size, arrow_y + arrow_head_size - offset, strum_color)
                 self.tft.line(arrow_center_x, arrow_y, arrow_center_x + arrow_head_size, arrow_y + arrow_head_size - offset, strum_color)
         else:
-            # Rest - X mark - gray
+            # Rest - X mark - gray (matches box color)
             strum_color = self.tft.color565(150, 150, 150)
             x_size = 10
             for offset in range(4):
@@ -1586,20 +1686,11 @@ class ChordTrainer:
                         note = msg[1]
                         print(f"Note On: {note}")
                         
-                        # Check if it's a 22nd fret note - return to menu (but only if isolated)
-                        if note in SELECTION_NOTES:
-                            # Wait a short moment to see if more notes come (indicating a chord strum)
-                            await asyncio.sleep_ms(100)
-                            
-                            # Count how many notes are currently active in played_notes
-                            active_notes = sum(1 for n in self.played_notes if n is not None)
-                            
-                            # Only treat as menu trigger if it's a single isolated note
-                            if active_notes <= 1:
-                                print(f"22nd fret detected on string {SELECTION_NOTES.index(note)+1} - returning to menu...")
-                                return 'menu'
-                            else:
-                                print(f"22nd fret in chord strum ({active_notes} notes), ignoring for menu")
+                        # Check if it's a 22nd fret note on strings 1 or 2 (86 or 81) - return to menu
+                        # These notes cannot be played in normal chords (first 4 frets), so they're safe menu triggers
+                        if note in [86, 81]:
+                            print(f"Menu trigger detected (note {note}) - returning to menu...")
+                            return 'menu'
                         
                         # Check time difference FIRST before processing
                         if utime.ticks_diff(utime.ticks_ms(), time_last_chord) > 500:
@@ -1749,7 +1840,25 @@ class ChordTrainer:
                                 # Wrong - show what was played
                                 print(f"Wrong! Not enough matching notes")
                                 print(f"About to call display_wrong_chord with notes: {played_notes_copy}")
-                                self.display_wrong_chord("???", played_notes_copy, target_chord)
+                                
+                                # Determine strum direction from the order of played notes
+                                # If first note was higher string number, it's a down strum
+                                # If first note was lower string number, it's an up strum
+                                strum_dir = None
+                                if self.played_notes.index(next(n for n in self.played_notes if n is not None)) is not None:
+                                    first_string = None
+                                    for i, note in enumerate(self.played_notes):
+                                        if note is not None:
+                                            first_string = i + 1  # String 1-6
+                                            break
+                                    
+                                    # Infer direction: if first string was high (1), likely down strum
+                                    if first_string == 1:
+                                        strum_dir = 'D'
+                                    elif first_string == 6:
+                                        strum_dir = 'U'
+                                
+                                self.display_wrong_chord("???", played_notes_copy, target_chord, strum_dir)
                                 print("display_wrong_chord completed")
                                 
                                 # Wait a moment to show the wrong chord
@@ -1894,60 +2003,81 @@ class ChordTrainer:
     
     async def run(self):
         """Main run loop with menu system"""
-        if not await self.scan_and_connect():
-            print("Failed to connect")
-            return
-        
-        # Main loop - show menu when needed
         while True:
-            # Show menu and wait for selection
-            print("Showing practice menu...")
-            selected_chords = await self.show_menu_and_wait_for_selection()
+            # Try to connect - will loop until successful
+            if not self.connected:
+                if not await self.scan_and_connect():
+                    print("Failed to connect, retrying...")
+                    await asyncio.sleep(2)
+                    continue
             
-            # Set the chord sequence - extract mode if present
-            if len(selected_chords) > 0 and selected_chords[0] in ['R', 'S', 'M']:
-                self.randomize_mode = selected_chords[0]
-                self.chord_sequence = selected_chords[1:]
-            else:
-                # Empty or special mode (metronome, strum)
-                self.randomize_mode = None
-                self.chord_sequence = selected_chords
-            
-            self.sequence_mode = True  # Always in sequence mode now
-            self.current_chord_index = 0
-            
-            print(f"Starting practice: {len(self.chord_sequence)} chords")
-            print("Starting MIDI handler...")
-            print("Play 22nd fret on any string to return to menu")
-            
-            # Run the selected mode
-            try:
-                # Check if metronome mode
-                if len(self.chord_sequence) == 0:
-                    print("Metronome mode selected")
-                    # Show BPM selection menu
-                    selected_bpm = await self.show_bpm_menu()
-                    result = await self.run_metronome(bpm=selected_bpm)
-                # Check if metronome with pattern (mode 'M')
-                elif self.randomize_mode == 'M':
-                    print("Metronome with pattern selected")
-                    # Show BPM selection menu
-                    selected_bpm = await self.show_bpm_menu()
-                    # chord_sequence contains the pattern
-                    result = await self.run_metronome(bpm=selected_bpm, pattern=self.chord_sequence)
-                # Check if strum practice mode
-                elif self.chord_sequence == ['STRUM']:
-                    print("Strum Practice mode selected")
-                    # Show BPM selection menu
-                    selected_bpm = await self.show_bpm_menu()
-                    result = await self.run_strum_metronome(bpm=selected_bpm)
-                # Regular chord practice
-                else:
-                    result = await self.handle_midi()
+            # Main loop - show menu when needed
+            while self.connected:
+                # Show menu and wait for selection
+                print("Showing practice menu...")
+                selected_chords = await self.show_menu_and_wait_for_selection()
                 
-                # Any result returns to menu (outer loop continues)
-            except Exception as e:
-                print(f"Error: {e}")
+                # Set the chord sequence - extract mode if present
+                if len(selected_chords) > 0 and selected_chords[0] in ['R', 'S', 'M']:
+                    self.randomize_mode = selected_chords[0]
+                    self.chord_sequence = selected_chords[1:]
+                else:
+                    # Empty or special mode (metronome, strum)
+                    self.randomize_mode = None
+                    self.chord_sequence = selected_chords
+                
+                self.sequence_mode = True  # Always in sequence mode now
+                self.current_chord_index = 0
+                
+                # Reset the uploaded flag so it doesn't immediately exit practice
+                self.new_chord_list_uploaded = False
+                
+                print(f"Starting practice: {len(self.chord_sequence)} chords")
+                print("Starting MIDI handler...")
+                print("Play 22nd fret on any string to return to menu")
+                
+                # Run the selected mode
+                try:
+                    # Check if metronome mode
+                    if len(self.chord_sequence) == 0:
+                        print("Metronome mode selected")
+                        # Show BPM selection menu
+                        selected_bpm = await self.show_bpm_menu()
+                        result = await self.run_metronome(bpm=selected_bpm)
+                    # Check if metronome with pattern (mode 'M')
+                    elif self.randomize_mode == 'M':
+                        print("Metronome with pattern selected")
+                        # Show BPM selection menu
+                        selected_bpm = await self.show_bpm_menu()
+                        # chord_sequence contains the pattern
+                        result = await self.run_metronome(bpm=selected_bpm, pattern=self.chord_sequence)
+                    # Check if strum practice mode
+                    elif self.chord_sequence == ['STRUM']:
+                        print("Strum Practice mode selected")
+                        # Show BPM selection menu
+                        selected_bpm = await self.show_bpm_menu()
+                        result = await self.run_strum_metronome(bpm=selected_bpm)
+                    # Regular chord practice
+                    else:
+                        result = await self.handle_midi()
+                    
+                    # Any result returns to menu (outer loop continues)
+                except Exception as e:
+                    print(f"Error: {e}")
+                    # Check if connection was lost
+                    if not self.connected or not self.midi_characteristic:
+                        print("Connection lost, returning to scan...")
+                        self.connected = False
+                        break  # Break inner loop to trigger reconnection
+            
+            # If we exit the inner loop due to disconnection, try to reconnect
+            if not self.connected:
+                print("Attempting to reconnect...")
+                self.tft.fill(self.COLOR_BLACK)
+                self.tft.text("Connection Lost", 60, 100, self.COLOR_RED)
+                self.tft.text("Reconnecting...", 60, 120, self.COLOR_YELLOW)
+                self.tft.show()
+                await asyncio.sleep(1)
         
         # Disconnect when exiting (this code is now unreachable but kept for safety)
         if self.connection:
