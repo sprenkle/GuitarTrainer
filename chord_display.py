@@ -9,7 +9,7 @@ class ChordDisplay:
         self.display = display_manager
     
     def display_target_chord(self, chord_name):
-        """Display the target chord to play with fretboard diagram"""
+        """Display the target chord to play with fretboard diagram and fret labels"""
         self.display.clear()
         
         # Show large chord name
@@ -17,6 +17,24 @@ class ChordDisplay:
         
         # Draw the fretboard diagram
         self._draw_chord_fretboard(chord_name, Colors.ORANGE)
+        
+        # Show fret positions as text
+        chord_notes = CHORD_MIDI_NOTES.get(chord_name, [])
+        y = 175
+        
+        for string_num in range(1, 7):
+            open_note = OPEN_STRING_NOTES[string_num - 1]
+            fret = None
+            
+            # Find which fret on this string
+            for f in range(6):
+                if open_note + f in chord_notes:
+                    fret = f
+                    break
+            
+            if fret is not None:
+                text = f"S{string_num}:{fret}"
+                self.display.text(text, 30 + (string_num * 25), y, Colors.GREEN)
         
         # Instructions at bottom
         self.display.text("22nd fret = menu", 50, 210, Colors.ORANGE)

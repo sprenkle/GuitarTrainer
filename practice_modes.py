@@ -57,15 +57,40 @@ class RegularPracticeMode(PracticeMode):
         target_chord = self.chord_sequence[self.current_chord_index]
         print(f"=== DISPLAY CHORD: {target_chord} ===")
         
-        if self.chord_display:
-            self.chord_display.display_target_chord(target_chord)
-        else:
-            # Fallback display if chord_display not available
-            self.display.clear()
-            self.display.draw_large_text(target_chord, 70, 100, Colors.YELLOW)
-            self.display.text("Strum & hold", 50, 150, Colors.WHITE)
-            self.display.text("22nd=back", 70, 220, Colors.ORANGE)
-            self.display.show()
+        self.display.clear()
+        
+        # Display the chord name large
+        self.display.draw_large_text(target_chord, 70, 30, Colors.YELLOW)
+        
+        # Display fret info for this chord
+        from config import OPEN_STRING_NOTES
+        chord_notes = CHORD_MIDI_NOTES.get(target_chord, [])
+        
+        # Display each string's fret position
+        y = 90
+        self.display.text("Frets:", 60, y, Colors.WHITE)
+        y += 18
+        
+        for string_num in range(1, 7):
+            open_note = OPEN_STRING_NOTES[string_num - 1]
+            fret = None
+            
+            # Find which fret on this string
+            for f in range(6):
+                if open_note + f in chord_notes:
+                    fret = f
+                    break
+            
+            if fret is not None:
+                text = f"S{string_num}:{fret}"
+                self.display.text(text, 50, y, Colors.GREEN)
+                y += 16
+        
+        self.display.text("Strum & hold", 50, y + 10, Colors.WHITE)
+        self.display.text("22nd=back", 70, 220, Colors.ORANGE)
+        
+        self.display.show()
+        print(f"Displayed: {target_chord} with frets")
         
         async def timeout_handler():
             """Handle timeout - reset strum if no completion"""
@@ -192,10 +217,7 @@ class RegularPracticeMode(PracticeMode):
         
         if is_correct:
             print(f">>> SUCCESS! {target_chord} Correct!")
-            if self.chord_display:
-                self.chord_display.display_correct_chord(target_chord)
-            else:
-                self.display.show_success(f"{target_chord} Correct!")
+            self.display.show_success(f"{target_chord} Correct!")
             await asyncio.sleep(0.5)
             
             self.current_chord_index += 1
@@ -213,18 +235,36 @@ class RegularPracticeMode(PracticeMode):
                 self.current_chord_index = 0
         else:
             print(f"Wrong! Expected {target_chord}")
-            if self.chord_display:
-                self.chord_display.display_wrong_chord("???", target_chord)
         
         # Display next chord
         next_chord = self.chord_sequence[self.current_chord_index]
-        if self.chord_display:
-            self.chord_display.display_target_chord(next_chord)
-        else:
-            self.display.clear()
-            self.display.draw_large_text(next_chord, 70, 100, Colors.YELLOW)
-            self.display.text("Strum & hold", 50, 150, Colors.WHITE)
-            self.display.show()
+        self.display.clear()
+        self.display.draw_large_text(next_chord, 70, 30, Colors.YELLOW)
+        
+        # Display fret positions again
+        from config import OPEN_STRING_NOTES
+        chord_notes = CHORD_MIDI_NOTES.get(next_chord, [])
+        y = 90
+        self.display.text("Frets:", 60, y, Colors.WHITE)
+        y += 18
+        
+        for string_num in range(1, 7):
+            open_note = OPEN_STRING_NOTES[string_num - 1]
+            fret = None
+            
+            for f in range(6):
+                if open_note + f in chord_notes:
+                    fret = f
+                    break
+            
+            if fret is not None:
+                text = f"S{string_num}:{fret}"
+                self.display.text(text, 50, y, Colors.GREEN)
+                y += 16
+        
+        self.display.text("Strum & hold", 50, y + 10, Colors.WHITE)
+        self.display.text("22nd=back", 70, 220, Colors.ORANGE)
+        self.display.show()
     
     def _parse_midi(self, data):
         """Parse MIDI message"""
