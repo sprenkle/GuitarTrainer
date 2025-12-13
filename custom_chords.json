@@ -1,28 +1,18 @@
 [
-  ["Country Basic", ["R", "G", "C", "D", "Em"]],
-  ["Horse NN", ["S", "Em", "D6/9"]],
-  ["Landslide", ["R", "G", "C", "G/B", "Am7", "Am", "D7/F#", "Em"]],
-  ["Horse With NN", ["M", ["Em", "D"], ["Em", "D"], ["Em", "U"], ["Em", "U"], ["Em", "D"], ["Em", "U"], ["D6/9", "D"], ["D6/9", "D"], ["D6/9", "U"], ["D6/9", "U"], ["D6/9", "D"], ["D6/9", "U"]]],
   ["All Chords", ["R", "A", "Am", "A7", "B", "Bm", "B7", "C", "Cm", "C7", "D", "Dm", "D7", "E", "Em", "E7", "F", "Fm", "F7", "G", "Gm", "G7", "D6/9", "G/B", "Am7", "D7/F#"]],
-  ["H All Chords", ["H", "A", "Am", "A7", "B", "Bm", "B7", "C", "Cm", "C7", "D", "Dm", "D7", "E", "Em", "E7", "F", "Fm", "F7", "G", "Gm", "G7", "D6/9", "G/B", "Am7", "D7/F#"]]
-]
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+  ["All Chords", ["H", "A", "Am", "A7", "B", "Bm", "B7", "C", "Cm", "C7", "D", "Dm", "D7", "E", "Em", "E7", "F", "Fm", "F7", "G", "Gm", "G7", "D6/9", "G/B", "Am7", "D7/F#"]],
+  ["A Major & 7", ["R", "A", "A7"]],
+  ["B Major & 7", ["R", "B", "B7"]],
+  ["C Major & 7", ["R", "C", "C7"]],
+  ["D Major & 7", ["R", "D", "D7"]],
+  ["E Major & 7", ["R", "E", "E7"]],
+  ["F Major & 7", ["R", "F", "F7"]],
+  ["G Major & 7", ["R", "G", "G7"]],
+  ["A Major & 7", ["H", "A", "A7"]],
+  ["B Major & 7", ["H", "B", "B7"]],
+  ["C Major & 7", ["H", "C", "C7"]],
+  ["D Major & 7", ["H", "D", "D7"]],
+  ["E Major & 7", ["H", "E", "E7"]],
+  ["F Major & 7", ["H", "F", "F7"]],
+  ["G Major & 7", ["H", "G", "G7"]]
 ]

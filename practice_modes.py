@@ -141,10 +141,43 @@ class RegularPracticeMode(PracticeMode):
                     note = msg[1]
                     print(f"Note On: {note}")
                     
-                    # Check for menu trigger (86 or 81)
-                    if note in [86, 81]:
+                    # Check for navigation triggers on 22nd fret
+                    if note == 86:  # String 1, 22nd fret - Menu
                         print(f"Menu trigger detected")
                         return 'menu'
+                    elif note == 81:  # String 2, 22nd fret - Skip chord
+                        print(f"Skip chord detected")
+                        self.current_chord_index += 1
+                        if self.current_chord_index >= len(self.chord_sequence):
+                            if self.mode == 'R':
+                                print(">>> Sequence complete! Randomizing...")
+                                shuffled = list(self.chord_sequence)
+                                n = len(shuffled)
+                                for i in range(n - 1, 0, -1):
+                                    j = urandom.getrandbits(16) % (i + 1)
+                                    shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+                                self.chord_sequence = shuffled
+                                self.current_chord_index = 0
+                            else:
+                                print(">>> All chords completed!")
+                                return 'menu'
+                        self.target_chord = self.chord_sequence[self.current_chord_index]
+                        self.detector.reset()
+                        progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
+                        if self.chord_display:
+                            self.chord_display.display_target_chord(self.target_chord, progress_text)
+                        continue
+                    elif note == 77:  # String 3, 22nd fret - Previous chord
+                        print(f"Previous chord detected")
+                        self.current_chord_index -= 1
+                        if self.current_chord_index < 0:
+                            self.current_chord_index = len(self.chord_sequence) - 1
+                        self.target_chord = self.chord_sequence[self.current_chord_index]
+                        self.detector.reset()
+                        progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
+                        if self.chord_display:
+                            self.chord_display.display_target_chord(self.target_chord, progress_text)
+                        continue
                     
                     time_last_chord = utime.ticks_ms()
                     
@@ -344,7 +377,7 @@ class RegularPracticeMode(PracticeMode):
             self.current_chord_index += 1
             
             if self.current_chord_index >= len(self.chord_sequence):
-                if self.randomize_mode == 'R':
+                if self.mode == 'R':
                     print(">>> Sequence complete! Randomizing...")
                     shuffled = list(self.chord_sequence)
                     n = len(shuffled)
@@ -352,8 +385,10 @@ class RegularPracticeMode(PracticeMode):
                         j = urandom.getrandbits(16) % (i + 1)
                         shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
                     self.chord_sequence = shuffled
-                
-                self.current_chord_index = 0
+                    self.current_chord_index = 0
+                else:
+                    print(">>> All chords completed!")
+                    return 'menu'
         else:
             print(f"Wrong! Expected {self.target_chord}")
             if self.chord_display:
