@@ -82,7 +82,7 @@ class RegularPracticeMode(PracticeMode):
             progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
             if self.chord_display:
                 self.chord_display.display_target_chord(target_chord, progress_text)
-            
+            time.sleep_ms(500)
             self.detector.reset()
             timeout_task = None
             self.collected_strings = [None] * 6
