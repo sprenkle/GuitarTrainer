@@ -74,6 +74,14 @@ class ChordDisplay:
         x_pos = 70 if len(target_chord) > 1 else 90
         self.display.draw_large_text(target_chord, x_pos, 30, Colors.ORANGE)
         
+        # Get expected non-open notes for target chord
+        expected_notes = set(CHORD_MIDI_NOTES.get(target_chord, []))
+        non_open_expected = set()
+        for note in expected_notes:
+            is_open = note in OPEN_STRING_NOTES
+            if not is_open:
+                non_open_expected.add(note)
+        
         # Determine string colors based on whether each string was struck
         string_colors = []
         
@@ -94,12 +102,20 @@ class ChordDisplay:
             else:
                 string_colors.append(Colors.RED)    # String was NOT struck
         
+        # Create note color mapping - white if correct, red if wrong
+        note_colors = {}
+        for note in played_notes:
+            if note in non_open_expected:
+                note_colors[note] = Colors.WHITE  # Correct note for chord
+            else:
+                note_colors[note] = Colors.RED    # Wrong note for chord
+        
         # Draw target chord with color-coded strings
         self._draw_chord_fretboard(target_chord, Colors.ORANGE, string_colors)
         
-        # Overlay played notes with color based on strum direction
-        print(f"Drawing played notes overlay with {len(played_notes)} notes, direction: {strum_direction}")
-        self._draw_played_notes_overlay(played_notes, strum_direction)
+        # Overlay played notes with correct coloring (white for correct, red for wrong)
+        print(f"Drawing played notes overlay with {len(played_notes)} notes, note_colors: {note_colors}")
+        self._draw_played_notes_overlay(played_notes, strum_direction, note_colors)
         
         self.tft.show()
     
@@ -179,14 +195,15 @@ class ChordDisplay:
                 self.tft.fill_rect(fret_x - 5, string_y - 5, 11, 11, highlight_color)
                 self.tft.fill_rect(fret_x - 3, string_y - 3, 7, 7, highlight_color)
     
-    def _draw_played_notes_overlay(self, played_notes, strum_direction=None):
+    def _draw_played_notes_overlay(self, played_notes, strum_direction=None, note_colors=None):
         """Draw colored dots over the fretboard showing where user played
         
         Args:
             played_notes: Set of MIDI notes that were played
             strum_direction: 'D' for down (white), 'U' for up (blue), None for red
+            note_colors: Optional dict mapping note -> color. If provided, overrides strum_direction
         """
-        print(f"draw_played_notes_overlay called with notes: {played_notes}, direction: {strum_direction}")
+        print(f"draw_played_notes_overlay called with notes: {played_notes}, direction: {strum_direction}, note_colors: {note_colors}")
         
         if not played_notes:
             print("No notes to draw")
@@ -197,16 +214,22 @@ class ChordDisplay:
         string_spacing = 16
         fret_width = 40
         
-        # Determine color based on strum direction
+        # Determine color based on strum direction (used if note_colors not provided)
         if strum_direction == 'D':
-            note_color = Colors.WHITE  # Down strum = white
+            default_note_color = Colors.WHITE  # Down strum = white
         elif strum_direction == 'U':
-            note_color = Colors.BLUE   # Up strum = blue
+            default_note_color = Colors.BLUE   # Up strum = blue
         else:
-            note_color = Colors.RED    # No direction = red (error)
+            default_note_color = Colors.RED    # No direction = red (error)
         
         # For each played note, find the best string to show it on (lowest fret position)
         for note in played_notes:
+            # Get color for this note from note_colors dict if available
+            if note_colors and note in note_colors:
+                note_color = note_colors[note]
+            else:
+                note_color = default_note_color
+            
             best_string = None
             best_fret = None
             
@@ -227,11 +250,15 @@ class ChordDisplay:
                 if best_fret == 0:
                     # Open string - draw O
                     self.tft.text("O", start_x - 18, string_y - 4, note_color)
-                elif best_fret <= 4:
-                    # Fretted note within display range (frets 1-4) - draw marker
-                    fret_x = start_x + (best_fret * fret_width) - (fret_width // 2)
+                else:
+                    # Fretted note - draw marker at appropriate position
+                    # Frets 1-4 are shown on display, frets 5+ are indicated differently
+                    if best_fret <= 4:
+                        fret_x = start_x + (best_fret * fret_width) - (fret_width // 2)
+                    else:
+                        # For frets beyond 4, show marker at fret 4 position to indicate higher fret
+                        fret_x = start_x + (4 * fret_width) - (fret_width // 2)
                     self.tft.fill_rect(fret_x - 3, string_y - 3, 6, 6, note_color)
-                # Note: frets beyond 4 won't be visible on the 4-fret display
     
     def _get_chord_shape(self, chord_name):
         """Generate chord fingering from MIDI notes

@@ -4,7 +4,7 @@ import asyncio
 import urandom
 import utime
 import time
-from config import SELECTION_NOTES, CHORD_MIDI_NOTES, Colors
+from config import SELECTION_NOTES, CHORD_MIDI_NOTES, OPEN_STRING_NOTES, Colors
 from metronome import Metronome
 from chord_detector import ChordDetector
 
@@ -147,7 +147,12 @@ class RegularPracticeMode(PracticeMode):
                     if timeout_task is not None:
                         timeout_task.cancel()
                     timeout_task = asyncio.create_task(timeout_handler())
-                    self._show_live_fretboard(target_chord, self.detector.get_played_notes(), progress_text)
+                    try:
+                        self._show_live_fretboard(target_chord, self.detector.get_played_notes(), progress_text)
+                    except Exception as e:
+                        print(f"Error in _show_live_fretboard: {e}")
+                        import sys
+                        sys.print_exception(e)
 
                     if not started:
                         continue
@@ -228,6 +233,7 @@ class RegularPracticeMode(PracticeMode):
         
         Shows all strings that have been struck in green, with all played notes overlaid.
         Uses the detector's played_notes array to determine which strings were actually struck.
+        Notes are colored green if correct for the chord, red if not.
         """
         print(f"Showing live fretboard for chord: {target_chord}, played_notes={played_notes}")
         if not self.chord_display:
@@ -235,21 +241,37 @@ class RegularPracticeMode(PracticeMode):
         print("Updating the display with live fretboard")
         
         # Get chord shape
-        from config import OPEN_STRING_NOTES
         chord_notes = CHORD_MIDI_NOTES.get(target_chord, [])
+        
+        # Get expected non-open notes for this chord
+        expected_notes = set(CHORD_MIDI_NOTES.get(target_chord, []))
+        non_open_expected = set()
+        for note in expected_notes:
+            is_open = note in OPEN_STRING_NOTES
+            if not is_open:
+                non_open_expected.add(note)
         
         # Determine which strings have been struck using detector's string mapping
         # detector.played_notes[i] has the note for string (i+1), or None if not struck
         string_colors = []
-        for string_index in range(6):
-            string_num = string_index + 1
+        for string_num in range(1, 7):
+            # Detector reverses indexing: string 6 at index 0, string 1 at index 5
+            detector_index = 6 - string_num
             # Check if this string has a note in the detector
-            if self.detector.played_notes[string_index] is not None:
+            if self.detector.played_notes[detector_index] is not None:
                 print(f"String {string_num} was hit")
                 string_colors.append(Colors.GREEN)  # String was hit
             else:
                 print(f"String {string_num} was NOT hit")
                 string_colors.append(Colors.WHITE)  # String not yet hit
+        
+        # Create note color mapping - green if correct, red if wrong
+        note_colors = {}
+        for note in played_notes:
+            if note in non_open_expected:
+                note_colors[note] = Colors.GREEN  # Correct note for chord
+            else:
+                note_colors[note] = Colors.RED    # Wrong note for chord
         
         # Only redraw the full fretboard when needed - use optimized drawing
         self.display.tft.fill(Colors.BLACK)
@@ -264,9 +286,9 @@ class RegularPracticeMode(PracticeMode):
         # Draw the fretboard with color-coded strings
         self.chord_display._draw_chord_fretboard(target_chord, Colors.ORANGE, string_colors)
         
-        # Overlay the played notes
+        # Overlay the played notes (with correct coloring for now)
         if played_notes:
-            self.chord_display._draw_played_notes_overlay(played_notes, None)
+            self.chord_display._draw_played_notes_overlay(played_notes, None, note_colors)
         
         self.display.tft.show()
     
