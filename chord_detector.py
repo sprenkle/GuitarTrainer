@@ -46,20 +46,28 @@ class ChordDetector:
         return set(n for n in self.played_notes if n is not None)
     
     def detect_chord(self, target_chord):
-        """Check if played notes match target chord"""
+        """Check if played notes match target chord (non-open strings only)"""
         expected_notes = set(CHORD_MIDI_NOTES.get(target_chord, []))
         played_notes = self.get_played_notes()
         
-        print(f"detect_chord({target_chord}): expected={expected_notes}, played={played_notes}")
+        # Filter out open strings (fret 0) from expected notes
+        non_open_expected = set()
+        for note in expected_notes:
+            # Check if this note is NOT an open string
+            is_open = note in OPEN_STRING_NOTES
+            if not is_open:
+                non_open_expected.add(note)
         
-        if not expected_notes:
+        print(f"detect_chord({target_chord}): expected={expected_notes}, non_open={non_open_expected}, played={played_notes}")
+        
+        if not non_open_expected:
             return False, None, None, None
         
-        matching = played_notes.intersection(expected_notes)
-        missing = expected_notes - played_notes
-        extra = played_notes - expected_notes
+        matching = played_notes.intersection(non_open_expected)
+        missing = non_open_expected - played_notes
+        extra = played_notes - non_open_expected
         
-        is_correct = played_notes.issuperset(expected_notes)
+        is_correct = played_notes.issuperset(non_open_expected)
         
         print(f"  matching={matching}, missing={missing}, extra={extra}, correct={is_correct}")
         

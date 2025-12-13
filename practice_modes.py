@@ -36,6 +36,7 @@ class RegularPracticeMode(PracticeMode):
         self.mode = 'R'  # 'R' for randomize, 'S' for sequence, None for direct
         self.last_display_update_ms = 0
         self.display_update_interval_ms = 30  # Throttle updates to 30ms (~33 FPS)
+        self.collected_strings = [None] * 6
 
     async def run(self):
         """Run regular chord practice"""
@@ -72,12 +73,9 @@ class RegularPracticeMode(PracticeMode):
         
         async def timeout_handler():
             """Handle timeout - reset strum if no completion"""
-            await asyncio.sleep_ms(20900)  # Reset display after 500ms if strum not completed
+            await asyncio.sleep_ms(1000)  # Reset display after 500ms if strum not completed
             nonlocal started, notes_hit, timeout_task
             print("Strum timeout, resetting...")
-            started = False
-            notes_hit = False
-            self.detector.reset()
             
             # Reset display to show target chord with white strings
             # time.sleep_ms(500)
@@ -85,8 +83,13 @@ class RegularPracticeMode(PracticeMode):
             if self.chord_display:
                 self.chord_display.display_target_chord(target_chord, progress_text)
             
+            self.detector.reset()
             timeout_task = None
-        collected_strings = [None] * 6
+            self.collected_strings = [None] * 6
+            started = False
+            notes_hit = False
+            self.detector.reset()
+
         try:
             while self.ble.connected:
                 # print("Waiting for MIDI...")
@@ -119,14 +122,6 @@ class RegularPracticeMode(PracticeMode):
                         print(f"Menu trigger detected")
                         return 'menu'
                     
-                    # Check time difference FIRST before processing
-                    if utime.ticks_diff(utime.ticks_ms(), time_last_chord) > 500:
-                        print("Time reset")
-                        started = False
-                        notes_hit = False
-                        self.detector.reset()
-                        last_note = None
-                    
                     time_last_chord = utime.ticks_ms()
                     
                     # Add note to detector
@@ -142,94 +137,20 @@ class RegularPracticeMode(PracticeMode):
                     
                     last_note = note
                     
-                    if collected_strings[string_num - 1] == None or collected_strings[string_num - 1] > collected_strings[string_num - 1]:
-                        collected_strings[string_num - 1] = note
+                    if self.collected_strings[string_num - 1] == None or self.collected_strings[string_num - 1] > self.collected_strings[string_num - 1]:
+                        self.collected_strings[string_num - 1] = note
 
-                    if all(x is not None for x in collected_strings):
+                    if all(x is not None for x in self.collected_strings):
                         print("All strings were struck!")
                         started = True
 
-                    # Start strum detection
-                    # if not started:
-                    #     if string_num == 6 or string_num == 1:
-                    #         print(f'Strum started on string {string_num}')
-                    #         started = True
-                    #         strum_start_time = utime.ticks_ms()
-                    #         up = (string_num == 1)
-                    #         self.last_display_update_ms = 0  # Reset display throttle when strum starts
-                            
                     if timeout_task is not None:
                         timeout_task.cancel()
                     timeout_task = asyncio.create_task(timeout_handler())
-                    self._show_live_fretboard(target_chord, note, self.detector.get_played_notes(), progress_text)
-                    #self._display_chord(note)
-                    # if self.chord_display:
-                    #     print("Updating the display with live fretboard");
-                    #     self.display.tft.fill(Colors.BLACK)
-                    #     self.display.text(progress_text, 90, 5, Colors.WHITE)
-                    #     x_pos = 70 if len(target_chord) > 1 else 90
-                    #     self.display.draw_large_text(target_chord, x_pos, 30, Colors.ORANGE)
-                    #     self.chord_display._draw_chord_fretboard(target_chord, Colors.ORANGE, string_colors)
-                    #     self.chord_display._draw_played_notes_overlay(played_notes, None)
-                    #     self.display.tft.show()
+                    self._show_live_fretboard(target_chord, self.detector.get_played_notes(), progress_text)
 
                     if not started:
                         continue
-
-                    # Show real-time display of struck strings as they come in (with throttling)
-                    # if started:
-                        # current_time_ms = utime.ticks_ms()
-                        # if True or utime.ticks_diff(current_time_ms, self.last_display_update_ms) >= self.display_update_interval_ms:
-                        #     self.last_display_update_ms = current_time_ms
-                            
-                        #     # Get all notes played so far
-                        #     played_notes = self.detector.get_played_notes()
-                            
-                        #     # Determine which strings were hit
-                        #     from config import OPEN_STRING_NOTES
-                        #     string_colors = []
-                        #     for string_num in range(1, 7):
-                        #         open_note = OPEN_STRING_NOTES[string_num - 1]
-                        #         string_was_hit = False
-                                
-                        #         # Check if any note on this string was played
-                        #         for fret in range(25):
-                        #             note_check = open_note + fret
-                        #             if note_check in played_notes:
-                        #                 string_was_hit = True
-                        #                 break
-                                
-                        #         if string_was_hit:
-                        #             string_colors.append(Colors.GREEN)  # String was hit
-                        #         else:
-                        #             string_colors.append(Colors.RED)    # String not yet hit
-                            
-                            # Update display with struck strings
-                            # if self.chord_display:
-                                # print("Updating the display with live fretboard");
-                                # self.display.tft.fill(Colors.BLACK)
-                                # self.display.text(progress_text, 90, 5, Colors.WHITE)
-                                # x_pos = 70 if len(target_chord) > 1 else 90
-                                # self.display.draw_large_text(target_chord, x_pos, 30, Colors.ORANGE)
-                                # self.chord_display._draw_chord_fretboard(target_chord, Colors.ORANGE, string_colors)
-                                # self.chord_display._draw_played_notes_overlay(played_notes, None)
-                                # self.display.tft.show()
-                    
-                    # Check if strum completed
-                    # print(f"Strum check: up={up}, string_num={string_num}, last_string={last_string}")
-                    # if up and string_num == 6:
-                    #     print(f'Strum completed (up)')
-                    #     started = False
-                    #     notes_hit = True
-                    #     if timeout_task is not None:
-                    #         timeout_task.cancel()
-                    #         timeout_task = None
-                    # elif not up and string_num == 1:
-                    #     print(f'Strum completed (down)')
-                    #     started = False
-                    #     if timeout_task is not None:
-                    #         timeout_task.cancel()
-                    #         timeout_task = None
                     
                     last_string = string_num
                     
@@ -239,14 +160,18 @@ class RegularPracticeMode(PracticeMode):
                     # Process completed chord
                     await self._process_chord_detection()
                     
+                    # Update target_chord to the current chord after processing
+                    target_chord = self.chord_sequence[self.current_chord_index]
+                    progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
+                    
                     # Reset for next chord
                     self.detector.reset()
                     started = False
                     notes_hit = False
                     last_note = None
-                    collected_strings = [None] * 6
+                    self.collected_strings = [None] * 6
                 
-                await asyncio.sleep_ms(10)
+                await asyncio.sleep_ms(1)
         
         except Exception as e:
             print(f"Error in practice mode: {e}")
@@ -298,12 +223,13 @@ class RegularPracticeMode(PracticeMode):
 
 
 
-    def _show_live_fretboard(self, target_chord, current_note, played_notes, progress_text):
+    def _show_live_fretboard(self, target_chord, played_notes, progress_text):
         """Display the fretboard in real-time with played notes overlaid
         
-        Shows the target chord with the current string highlighted in green.
+        Shows all strings that have been struck in green, with all played notes overlaid.
+        Uses the detector's played_notes array to determine which strings were actually struck.
         """
-        print(f"Showing live fretboard for chord: {target_chord}, current_note={current_note}")
+        print(f"Showing live fretboard for chord: {target_chord}, played_notes={played_notes}")
         if not self.chord_display:
             return
         print("Updating the display with live fretboard")
@@ -312,27 +238,18 @@ class RegularPracticeMode(PracticeMode):
         from config import OPEN_STRING_NOTES
         chord_notes = CHORD_MIDI_NOTES.get(target_chord, [])
         
-        # Find which string the current note is on
-        current_string = None
-        for string_num in range(1, 7):
-            open_note = OPEN_STRING_NOTES[string_num - 1]
-            # Check if current note is on this string
-            for fret in range(25):
-                if open_note + fret == current_note:
-                    current_string = string_num
-                    break
-            if current_string:
-                break
-        
-        # Determine string colors - only current string is green
+        # Determine which strings have been struck using detector's string mapping
+        # detector.played_notes[i] has the note for string (i+1), or None if not struck
         string_colors = []
-        for string_num in range(1, 7):
-            if string_num == current_string:
-                print(f"String {string_num} is current (green)")
-                string_colors.append(Colors.GREEN)  # Current string is green
+        for string_index in range(6):
+            string_num = string_index + 1
+            # Check if this string has a note in the detector
+            if self.detector.played_notes[string_index] is not None:
+                print(f"String {string_num} was hit")
+                string_colors.append(Colors.GREEN)  # String was hit
             else:
-                print(f"String {string_num} is not current (white)")
-                string_colors.append(Colors.WHITE)  # All others are white
+                print(f"String {string_num} was NOT hit")
+                string_colors.append(Colors.WHITE)  # String not yet hit
         
         # Only redraw the full fretboard when needed - use optimized drawing
         self.display.tft.fill(Colors.BLACK)
@@ -357,9 +274,11 @@ class RegularPracticeMode(PracticeMode):
         """Process chord detection result"""
         print("-----------------------------------------------------------------------------")
         target_chord = self.chord_sequence[self.current_chord_index]
+        
+        # Get played notes BEFORE resetting
+        played_notes = self.detector.get_played_notes()
         is_correct, matching, missing, extra = self.detector.detect_chord(target_chord)
         
-        played_notes = self.detector.get_played_notes()
         print(f">>> Target: {target_chord}, Played: {played_notes}, Correct: {is_correct}")
         if not is_correct:
             print(f"    Missing: {missing}, Extra: {extra}")
@@ -392,14 +311,13 @@ class RegularPracticeMode(PracticeMode):
         else:
             print(f"Wrong! Expected {target_chord}")
             if self.chord_display:
-                played_notes_set = self.detector.get_played_notes()
-                self.chord_display.display_wrong_chord("???", played_notes_set, target_chord, None, progress_text)
+                self.chord_display.display_wrong_chord("???", played_notes, target_chord, None, progress_text)
                 await asyncio.sleep(1.0)  # Show wrong result for 1 second before moving on
         
-        # Reset detector for next chord
+        # Reset detector BEFORE displaying next chord
         self.detector.reset()
         
-        # Display next chord
+        # Display next chord with fresh detector state
         next_chord = self.chord_sequence[self.current_chord_index]
         progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
         if self.chord_display:
