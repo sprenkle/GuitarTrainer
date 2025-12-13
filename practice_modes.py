@@ -32,6 +32,7 @@ class RegularPracticeMode(PracticeMode):
         super().__init__(display_manager, ble_manager, chord_detector, menu_system, chord_display)
         self.chord_sequence = chord_sequence
         self.current_chord_index = 0
+        self.target_chord = None  # Current target chord
         self.randomize_mode = None
         self.mode = 'R'  # 'R' for randomize, 'S' for sequence, None for direct
         self.last_display_update_ms = 0
@@ -58,16 +59,16 @@ class RegularPracticeMode(PracticeMode):
         time_last_chord = 0
         
         # Display the first target chord
-        target_chord = self.chord_sequence[self.current_chord_index]
-        print(f"=== DISPLAY CHORD: {target_chord} ===")
+        self.target_chord = self.chord_sequence[self.current_chord_index]
+        print(f"=== DISPLAY CHORD: {self.target_chord} ===")
         
         progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
         if self.chord_display:
-            self.chord_display.display_target_chord(target_chord, progress_text)
+            self.chord_display.display_target_chord(self.target_chord, progress_text)
         else:
             # Fallback display
             self.display.clear()
-            self.display.draw_large_text(target_chord, 70, 30, Colors.YELLOW)
+            self.display.draw_large_text(self.target_chord, 70, 30, Colors.YELLOW)
             self.display.text(progress_text, 90, 5, Colors.WHITE)
             self.display.show()
         
@@ -76,19 +77,33 @@ class RegularPracticeMode(PracticeMode):
             await asyncio.sleep_ms(1000)  # Reset display after 500ms if strum not completed
             nonlocal started, notes_hit, timeout_task
             print("Strum timeout, resetting...")
+
+            await self._process_chord_detection()
             
-            # Reset display to show target chord with white strings
-            # time.sleep_ms(500)
-            progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
-            if self.chord_display:
-                self.chord_display.display_target_chord(target_chord, progress_text)
-            time.sleep_ms(500)
+            # Reset for next chord
             self.detector.reset()
-            timeout_task = None
-            self.collected_strings = [None] * 6
             started = False
             notes_hit = False
-            self.detector.reset()
+            last_note = None
+            self.collected_strings = [None] * 6
+
+
+
+            # # Reset display to show target chord with white strings
+            # # time.sleep_ms(500)
+            # progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
+            # if self.chord_display:
+            #     self.chord_display.display_target_chord(target_chord, progress_text)
+            
+            
+            
+            # await asyncio.sleep_ms(500)
+            # self.detector.reset()
+            # timeout_task = None
+            # self.collected_strings = [None] * 6
+            # started = False
+            # notes_hit = False
+            # self.detector.reset()
 
         try:
             while self.ble.connected:
@@ -148,7 +163,7 @@ class RegularPracticeMode(PracticeMode):
                         timeout_task.cancel()
                     timeout_task = asyncio.create_task(timeout_handler())
                     try:
-                        self._show_live_fretboard(target_chord, self.detector.get_played_notes(), progress_text)
+                        self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text)
                     except Exception as e:
                         print(f"Error in _show_live_fretboard: {e}")
                         import sys
@@ -156,7 +171,8 @@ class RegularPracticeMode(PracticeMode):
 
                     if not started:
                         continue
-                    
+                    timeout_task.cancel()
+                    timeout_task = None
                     last_string = string_num
                     
                     # if not notes_hit:
@@ -166,7 +182,7 @@ class RegularPracticeMode(PracticeMode):
                     await self._process_chord_detection()
                     
                     # Update target_chord to the current chord after processing
-                    target_chord = self.chord_sequence[self.current_chord_index]
+                    self.target_chord = self.chord_sequence[self.current_chord_index]
                     progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
                     
                     # Reset for next chord
@@ -295,24 +311,23 @@ class RegularPracticeMode(PracticeMode):
     async def _process_chord_detection(self):
         """Process chord detection result"""
         print("-----------------------------------------------------------------------------")
-        target_chord = self.chord_sequence[self.current_chord_index]
         
         # Get played notes BEFORE resetting
         played_notes = self.detector.get_played_notes()
-        is_correct, matching, missing, extra = self.detector.detect_chord(target_chord)
+        is_correct, matching, missing, extra = self.detector.detect_chord(self.target_chord)
         
-        print(f">>> Target: {target_chord}, Played: {played_notes}, Correct: {is_correct}")
+        print(f">>> Target: {self.target_chord}, Played: {played_notes}, Correct: {is_correct}")
         if not is_correct:
             print(f"    Missing: {missing}, Extra: {extra}")
         
         progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
         
         if is_correct:
-            print(f">>> SUCCESS! {target_chord} Correct!")
+            print(f">>> SUCCESS! {self.target_chord} Correct!")
             if self.chord_display:
-                self.chord_display.display_correct_chord(target_chord, progress_text)
+                self.chord_display.display_correct_chord(self.target_chord, progress_text)
             else:
-                self.display.show_success(f"{target_chord} Correct!")
+                self.display.show_success(f"{self.target_chord} Correct!")
             await asyncio.sleep(0.125)  # Wait 1/8 second before clearing
             self.display.tft.fill(Colors.BLACK)  # Clear screen
             self.display.tft.show()
@@ -331,22 +346,22 @@ class RegularPracticeMode(PracticeMode):
                 
                 self.current_chord_index = 0
         else:
-            print(f"Wrong! Expected {target_chord}")
+            print(f"Wrong! Expected {self.target_chord}")
             if self.chord_display:
-                self.chord_display.display_wrong_chord("???", played_notes, target_chord, None, progress_text)
+                self.chord_display.display_wrong_chord("???", played_notes, self.target_chord, None, progress_text)
                 await asyncio.sleep(1.0)  # Show wrong result for 1 second before moving on
         
         # Reset detector BEFORE displaying next chord
         self.detector.reset()
         
         # Display next chord with fresh detector state
-        next_chord = self.chord_sequence[self.current_chord_index]
+        self.target_chord = self.chord_sequence[self.current_chord_index]
         progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
         if self.chord_display:
-            self.chord_display.display_target_chord(next_chord, progress_text)
+            self.chord_display.display_target_chord(self.target_chord, progress_text)
         else:
             self.display.clear()
-            self.display.draw_large_text(next_chord, 70, 30, Colors.YELLOW)
+            self.display.draw_large_text(self.target_chord, 70, 30, Colors.YELLOW)
             self.display.text(progress_text, 90, 5, Colors.WHITE)
             self.display.show()
     

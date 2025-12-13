@@ -117,6 +117,9 @@ class ChordDisplay:
         print(f"Drawing played notes overlay with {len(played_notes)} notes, note_colors: {note_colors}")
         self._draw_played_notes_overlay(played_notes, strum_direction, note_colors)
         
+        # Draw X on strings where notes were missed
+        self._draw_missed_notes(target_chord, played_notes)
+        
         self.tft.show()
     
     def display_playing_chord(self, chord_name, played_notes, strum_direction=None, progress_text=None):
@@ -259,6 +262,56 @@ class ChordDisplay:
                         # For frets beyond 4, show marker at fret 4 position to indicate higher fret
                         fret_x = start_x + (4 * fret_width) - (fret_width // 2)
                     self.tft.fill_rect(fret_x - 3, string_y - 3, 6, 6, note_color)
+    
+    def _draw_missed_notes(self, target_chord, played_notes):
+        """Draw X on strings where notes were missed (expected but not played)"""
+        # Get expected non-open notes for target chord
+        expected_notes = set(CHORD_MIDI_NOTES.get(target_chord, []))
+        non_open_expected = set()
+        for note in expected_notes:
+            is_open = note in OPEN_STRING_NOTES
+            if not is_open:
+                non_open_expected.add(note)
+        
+        # Find missed notes
+        missed_notes = non_open_expected - played_notes
+        
+        if not missed_notes:
+            print("No missed notes")
+            return
+        
+        start_x = 30
+        start_y = 100
+        string_spacing = 16
+        fret_width = 40
+        
+        # For each missed note, find its string and draw an X
+        for note in missed_notes:
+            # Find which string this note should be on
+            best_string = None
+            best_fret = None
+            
+            for string_num in range(1, 7):
+                open_note = OPEN_STRING_NOTES[string_num - 1]
+                if note >= open_note:
+                    fret_num = note - open_note
+                    if 0 <= fret_num <= 24:
+                        if best_fret is None or fret_num < best_fret:
+                            best_string = string_num
+                            best_fret = fret_num
+            
+            # Draw X on this string at the expected fret position
+            if best_string is not None and best_fret is not None:
+                string_y = start_y + ((best_string - 1) * string_spacing)
+                
+                if best_fret <= 4:
+                    fret_x = start_x + (best_fret * fret_width) - (fret_width // 2)
+                else:
+                    fret_x = start_x + (4 * fret_width) - (fret_width // 2)
+                
+                # Draw X in red
+                self.tft.text("X", fret_x - 4, string_y - 4, Colors.RED)
+                print(f"Drew missed X on string {best_string} fret {best_fret}")
     
     def _get_chord_shape(self, chord_name):
         """Generate chord fingering from MIDI notes
