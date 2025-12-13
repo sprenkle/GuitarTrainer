@@ -15,6 +15,7 @@ class GuitarTrainerApp:
     RANDOMIZE = 'R'
     SEQUENCE = 'S'
     METRODOME = 'M'
+    HIDDE_DIAGRAM = 'H'
 
     def __init__(self, tft):
         # Initialize managers
@@ -53,7 +54,7 @@ class GuitarTrainerApp:
                     print(f"Menu returned: {selected_chords}, type: {type(selected_chords)}")
                     
                     # Set the chord sequence
-                    if selected_chords and len(selected_chords) > 0 and selected_chords[0] in ['R', 'S', 'M']:
+                    if selected_chords and len(selected_chords) > 0 and selected_chords[0] in ['R', 'S', 'M', 'H']:
                         self.randomize_mode = selected_chords[0]
                         self.chord_sequence = selected_chords[1:]
                         print(f"Mode with prefix: mode={self.randomize_mode}, chords={self.chord_sequence}")
@@ -77,6 +78,14 @@ class GuitarTrainerApp:
                         mode = MetronomePracticeMode(
                             self.display, self.ble, self.detector, self.menu, self.chord_sequence, self.chord_display
                         )
+                        result = await mode.run()
+                        print(f"Practice session ended with result: {result}")
+                    elif self.randomize_mode == self.HIDDE_DIAGRAM:
+                        print("Hide Diagram mode selected")
+                        mode = RegularPracticeMode(
+                            self.display, self.ble, self.detector, self.menu, self.chord_sequence, self.chord_display
+                        )
+                        mode.hide_diagram = True
                         result = await mode.run()
                         print(f"Practice session ended with result: {result}")
                     elif self.randomize_mode == self.RANDOMIZE or self.randomize_mode == self.SEQUENCE:

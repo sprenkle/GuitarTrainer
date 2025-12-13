@@ -35,6 +35,7 @@ class RegularPracticeMode(PracticeMode):
         self.target_chord = None  # Current target chord
         self.randomize_mode = None
         self.mode = 'R'  # 'R' for randomize, 'S' for sequence, None for direct
+        self.hide_diagram = False  # 'H' for hide diagram until first strike
         self.last_display_update_ms = 0
         self.display_update_interval_ms = 30  # Throttle updates to 30ms (~33 FPS)
         self.collected_strings = [None] * 6
@@ -63,7 +64,15 @@ class RegularPracticeMode(PracticeMode):
         print(f"=== DISPLAY CHORD: {self.target_chord} ===")
         
         progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
-        if self.chord_display:
+        if self.hide_diagram:
+            # Hide mode: show only chord name, no diagram
+            self.display.tft.fill(Colors.BLACK)
+            self.display.text(progress_text, 90, 5, Colors.WHITE)
+            x_pos = 70 if len(self.target_chord) > 1 else 90
+            self.display.draw_large_text(self.target_chord, x_pos, 60, Colors.ORANGE)
+            self.display.text("(Ready to play)", 70, 180, Colors.WHITE)
+            self.display.tft.show()
+        elif self.chord_display:
             self.chord_display.display_target_chord(self.target_chord, progress_text)
         else:
             # Fallback display
@@ -357,7 +366,15 @@ class RegularPracticeMode(PracticeMode):
         # Display next chord with fresh detector state
         self.target_chord = self.chord_sequence[self.current_chord_index]
         progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
-        if self.chord_display:
+        if self.hide_diagram:
+            # Hide mode: show only chord name, no diagram
+            self.display.tft.fill(Colors.BLACK)
+            self.display.text(progress_text, 90, 5, Colors.WHITE)
+            x_pos = 70 if len(self.target_chord) > 1 else 90
+            self.display.draw_large_text(self.target_chord, x_pos, 60, Colors.ORANGE)
+            self.display.text("(Ready to play)", 70, 180, Colors.WHITE)
+            self.display.tft.show()
+        elif self.chord_display:
             self.chord_display.display_target_chord(self.target_chord, progress_text)
         else:
             self.display.clear()
