@@ -23,16 +23,15 @@ class BLEConnectionManager:
         
         print("Initializing Bluetooth...")
         
-        # Initialize network for BLE (this is important!)
+        # Disable WLAN to allow BLE to work
         try:
             wlan = network.WLAN(network.STA_IF)
-            wlan.active(True)
-            await asyncio.sleep(2)
-            print(f"WLAN active: {wlan.active()}")
+            if wlan.active():
+                print("Disabling WLAN for BLE...")
+                wlan.active(False)
+                await asyncio.sleep(0.5)
         except Exception as e:
-            print(f"Init failed: {e}")
-            self.display.show_error("BLE Init Failed")
-            return False
+            print(f"WLAN disable warning: {e}")
         
         self.display.clear()
         self.display.text("Scanning for", 70, 100)
@@ -111,8 +110,7 @@ class BLEConnectionManager:
         
         except Exception as e:
             print(f"Scan failed: {e}")
-            import traceback
-            traceback.print_exc()
+            # Note: traceback module not available in MicroPython
         
         print(f"Scan completed. Found {found_count} devices total")
         print("Aeroband guitar not found")
@@ -136,8 +134,8 @@ class BLEConnectionManager:
         
         try:
             data = await asyncio.wait_for(self.midi_characteristic.notified(), timeout=timeout)
-            print(f"DEBUG BLE: Received notification: {data}")
+            #print(f"DEBUG BLE: Received notification: {data}")
             return data
         except asyncio.TimeoutError:
-            print(f"DEBUG BLE: Wait timeout")
+            #print(f"DEBUG BLE: Wait timeout")
             return None

@@ -14,7 +14,7 @@ class ChordDetector:
         string_map = {}
         for string_num in range(6, 0, -1):
             open_note = OPEN_STRING_NOTES[string_num - 1]
-            for fret in range(5):
+            for fret in range(5):  # Extended range to fret 4
                 midi_note = open_note + fret
                 string_map[midi_note] = string_num
         return string_map
@@ -23,15 +23,16 @@ class ChordDetector:
         """Add a note to the current chord"""
         string_n = self.string_number_map.get(note)
         if string_n is None:
+            print(f"Note {note} not in string map")
             return None
         
         # Reverse array: string 6 at index 0, string 1 at index 5
         string_num = 6 - string_n
-        
         # Store note on the string, replacing if it's higher (higher fret)
         current_note = self.played_notes[string_num]
         if current_note is None or note > current_note:
             self.played_notes[string_num] = note
+            print(f"Added note {note} to string {string_num + 1}")
             return string_num
         
         return string_num
@@ -49,6 +50,8 @@ class ChordDetector:
         expected_notes = set(CHORD_MIDI_NOTES.get(target_chord, []))
         played_notes = self.get_played_notes()
         
+        print(f"detect_chord({target_chord}): expected={expected_notes}, played={played_notes}")
+        
         if not expected_notes:
             return False, None, None, None
         
@@ -57,6 +60,8 @@ class ChordDetector:
         extra = played_notes - expected_notes
         
         is_correct = played_notes.issuperset(expected_notes)
+        
+        print(f"  matching={matching}, missing={missing}, extra={extra}, correct={is_correct}")
         
         return is_correct, matching, missing, extra
     

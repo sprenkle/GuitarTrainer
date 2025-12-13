@@ -12,7 +12,10 @@ from config import Colors
 
 class GuitarTrainerApp:
     """Main application class that orchestrates all components"""
-    
+    RANDOMIZE = 'R'
+    SEQUENCE = 'S'
+    METRODOME = 'M'
+
     def __init__(self, tft):
         # Initialize managers
         self.display = DisplayManager(tft)
@@ -66,12 +69,24 @@ class GuitarTrainerApp:
                     
                     # Run selected mode
                     if len(self.chord_sequence) == 0:
-                        print("Metronome mode selected")
-                        selected_bpm = await self.menu.show_bpm_menu()
+                        print("No chords selected, showing menu again")
+                        continue    # Skip the rest of the loop and show menu again 
+
+                    if self.randomize_mode == self.METRODOME:
+                        print("Metrodome practice mode selected")
                         mode = MetronomePracticeMode(
-                            self.display, self.ble, self.detector, self.menu, selected_bpm, self.chord_display
+                            self.display, self.ble, self.detector, self.menu, self.chord_sequence, self.chord_display
                         )
                         result = await mode.run()
+                        print(f"Practice session ended with result: {result}")
+                    elif self.randomize_mode == self.RANDOMIZE or self.randomize_mode == self.SEQUENCE:
+                        print(f"Practice Mode {self.randomize_mode}")
+                        mode = RegularPracticeMode(
+                            self.display, self.ble, self.detector, self.menu, self.chord_sequence, self.chord_display
+                        )
+                        mode.mode = self.randomize_mode 
+                        result = await mode.run()
+                        print(f"Practice session ended with result: {result}")
                     else:
                         print("Regular practice mode selected")
                         mode = RegularPracticeMode(
@@ -80,8 +95,8 @@ class GuitarTrainerApp:
                         if self.randomize_mode:
                             mode.randomize_mode = self.randomize_mode
                         result = await mode.run()
-                    
-                    print(f"Practice session ended with result: {result}")
+                        
+                        print(f"Practice session ended with result: {result}")
                 
                 except Exception as e:
                     print(f"Error during practice: {e}")

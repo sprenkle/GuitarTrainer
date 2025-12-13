@@ -68,14 +68,30 @@ CHORD_MIDI_NOTES_FULL = {
 }
 
 # Practice options for menu
-PRACTICE_OPTIONS = [
-    ('Simple 3', ['R', 'C', 'G', 'D']),
-    ('Classic 4', ['R', 'C', 'G', 'Am', 'Em']),
-    ('All Basic', ['R', 'C', 'G', 'D', 'A', 'E', 'Am', 'Em', 'Dm']),
-    ('Horse With NN', ['S', 'Em', 'D6/9']),
-    ('Metronome', []),
-    ('Strum Practice', ['STRUM']),
-]
+# Load practice options from custom_chords.json
+def _load_practice_options():
+    """Load PRACTICE_OPTIONS from custom_chords.json"""
+    try:
+        import json
+        with open('custom_chords.json', 'r') as f:
+            data = json.load(f)
+            # Convert list of lists to list of tuples
+            options = []
+            for item in data:
+                name = item[0]
+                chords = item[1]
+                options.append((name, chords))
+            return options
+    except Exception as e:
+        print(f"Error loading custom_chords.json: {e}")
+        # Fallback to default options
+        return [
+            ('Simple 3', ['R', 'C', 'G', 'D']),
+            ('Classic 4', ['R', 'C', 'G', 'Am', 'Em']),
+            ('All Basic', ['R', 'C', 'G', 'D', 'A', 'E', 'Am', 'Em', 'Dm']),
+        ]
+
+PRACTICE_OPTIONS = _load_practice_options()
 
 # Menu selection notes (22nd fret)
 SELECTION_NOTES = [86, 81, 77, 72, 67, 62]
