@@ -14,7 +14,7 @@ class ChordDetector:
         string_map = {}
         for string_num in range(6, 0, -1):
             open_note = OPEN_STRING_NOTES[string_num - 1]
-            for fret in range(5):  # Extended range to fret 4
+            for fret in range(25):  # Extended range to handle higher frets
                 midi_note = open_note + fret
                 string_map[midi_note] = string_num
         return string_map
@@ -22,14 +22,29 @@ class ChordDetector:
     def add_note(self, note):
         """Add a note to the current chord"""
         string_n = self.string_number_map.get(note)
+        print(f"add_note: note={note}, string_n={string_n}  {self.played_notes[4]}")
+
         if string_n is None:
             print(f"Note {note} not in string map")
             return None
-        
+
+        special_59 = False
+        if note == 59 and self.played_notes[4] is not None and self.played_notes[3] is None:
+        #     # Special case for open B string (string 2)
+            print(f"Special case: assigning note {note} to string {string_n} -----------------------------------------")
+            string_n = 3
+            special_59 = True
+
+
+
+
         # Reverse array: string 6 at index 0, string 1 at index 5
         string_num = 6 - string_n
         # Store note on the string, replacing if it's higher (higher fret)
+
         current_note = self.played_notes[string_num]
+
+
         if current_note is None or note > current_note:
             self.played_notes[string_num] = note
             print(f"Added note {note} to string {string_num + 1}")
@@ -45,7 +60,7 @@ class ChordDetector:
         """Get set of currently played notes"""
         return set(n for n in self.played_notes if n is not None)
     
-    def detect_chord(self, target_chord):
+    def detect_chord(self, played_chords, target_chord):
         """Check if played notes match target chord (non-open strings only)"""
         expected_notes = set(CHORD_MIDI_NOTES.get(target_chord, []))
         played_notes = self.get_played_notes()
@@ -84,3 +99,24 @@ class ChordDetector:
     def get_string_from_note(self, note):
         """Get string number from MIDI note"""
         return self.string_number_map.get(note)
+    
+    def get_fret_positions(self):
+        """Get fret positions for all strings (0 = open, None = not played)
+        
+        Returns:
+            List of 6 fret positions, indexed by string (string 1 at index 0, string 6 at index 5)
+        """
+        fret_positions = [None] * 6
+        
+        for string_num in range(1, 7):
+            # Detector reverses indexing: string 6 at index 0, string 1 at index 5
+            detector_index = 6 - string_num
+            note = self.played_notes[detector_index]
+            
+            if note is not None:
+                open_note = OPEN_STRING_NOTES[string_num - 1]
+                fret = note - open_note
+                if fret >= 0:
+                    fret_positions[string_num - 1] = fret
+        
+        return fret_positions

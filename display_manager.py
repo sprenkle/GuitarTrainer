@@ -1,15 +1,27 @@
 # Display Manager for Guitar Trainer
 
 from config import Colors
-import LibreBodoni48 as large_font
+from scaled_font import ScaledFont
+
+try:
+    import LibreBodoni48 as large_font
+    HAS_FONT = True
+except ImportError:
+    print("Warning: LibreBodoni48 font not found, using scaled bitmap font")
+    HAS_FONT = False
+    large_font = None
 
 class DisplayManager:
     """Manages all TFT display operations"""
     
     def __init__(self, tft):
         self.tft = tft
-        # Set large font for the entire display (like original code did)
-        self.tft.set_font(large_font)
+        # Set large font for the entire display if available
+        if HAS_FONT and large_font:
+            self.tft.set_font(large_font)
+            print("Large font initialized")
+        else:
+            print("Using default font")
         Colors.initialize(tft)
         print(f"Colors initialized: WHITE={Colors.WHITE}, BLACK={Colors.BLACK}")
     
@@ -28,10 +40,20 @@ class DisplayManager:
         self.tft.text(text, x, y, color)
     
     def draw_large_text(self, text, x, y, color):
-        """Draw large text using the font"""
+        """Draw large text using the font or scaled bitmap font as fallback"""
         if color is None:
             color = Colors.WHITE
-        self.tft.draw_text(text, x, y, color)
+        
+        # Try to use draw_text if available (requires LibreBodoni48)
+        if hasattr(self.tft, 'draw_text') and HAS_FONT:
+            try:
+                self.tft.draw_text(text, x, y, color)
+                return
+            except Exception:
+                pass
+        
+        # Use scaled bitmap font for large readable text
+        ScaledFont.draw_text(self.tft, text, x, y, color)
     
     def fill_rect(self, x, y, width, height, color):
         """Draw filled rectangle"""

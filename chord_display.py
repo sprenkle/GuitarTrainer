@@ -169,6 +169,10 @@ class ChordDisplay:
             self.tft.hline(start_x, y, 160, string_color)
             self.tft.hline(start_x, y+1, 160, string_color)
         
+        # Draw nut line at the start (thicker)
+        self.tft.vline(start_x, start_y, string_spacing * 5, Colors.WHITE)
+        self.tft.vline(start_x+1, start_y, string_spacing * 5, Colors.WHITE)
+        
         # Draw 4 frets (vertical lines) - thicker
         for i in range(1, 5):
             x = start_x + (i * fret_width)
@@ -197,6 +201,69 @@ class ChordDisplay:
                 fret_x = start_x + (fret_num * fret_width) - (fret_width // 2)
                 self.tft.fill_rect(fret_x - 5, string_y - 5, 11, 11, highlight_color)
                 self.tft.fill_rect(fret_x - 3, string_y - 3, 7, 7, highlight_color)
+    
+    def _draw_fret_positions(self, fret_positions, target_chord=None):
+        """Draw the actual fret positions being played by the user
+        
+        Args:
+            fret_positions: List of 6 fret values (0=open, None=not played)
+            target_chord: Optional chord name to validate against
+        """
+        print(f"draw_fret_positions called with: {fret_positions}")
+        
+        if not fret_positions or all(f is None for f in fret_positions):
+            print("No fret positions to draw")
+            return
+        
+        start_x = 30
+        start_y = 100
+        string_spacing = 16
+        fret_width = 40
+        
+        # Get expected chord if provided
+        expected_chord_frets = None
+        if target_chord:
+            expected_notes = CHORD_MIDI_NOTES.get(target_chord, [])
+            expected_chord_frets = []
+            for string_num in range(1, 7):
+                open_note = OPEN_STRING_NOTES[string_num - 1]
+                expected_note = expected_notes[string_num - 1] if string_num - 1 < len(expected_notes) else None
+                if expected_note is not None:
+                    fret = expected_note - open_note
+                    expected_chord_frets.append(fret if fret >= 0 else None)
+                else:
+                    expected_chord_frets.append(None)
+        
+        # Draw each played fret position
+        for string_num in range(1, 7):
+            fret_num = fret_positions[string_num - 1]
+            
+            if fret_num is None:
+                continue  # String not played
+            
+            string_y = start_y + ((string_num - 1) * string_spacing)
+            
+            # Determine color: green if matches expected, red if wrong
+            if expected_chord_frets and expected_chord_frets[string_num - 1] is not None:
+                if fret_num == expected_chord_frets[string_num - 1]:
+                    marker_color = Colors.GREEN  # Correct fret
+                else:
+                    marker_color = Colors.RED    # Wrong fret
+            else:
+                marker_color = Colors.YELLOW    # No expected chord to compare
+            
+            if fret_num == 0:
+                # Open string - draw O
+                self.tft.text("O", start_x - 18, string_y - 4, marker_color)
+            else:
+                # Fretted note - draw filled square on fretboard
+                if fret_num <= 4:
+                    fret_x = start_x + (fret_num * fret_width) - (fret_width // 2)
+                else:
+                    # For frets beyond 4, show at fret 4 position
+                    fret_x = start_x + (4 * fret_width) - (fret_width // 2)
+                
+                self.tft.fill_rect(fret_x - 5, string_y - 5, 11, 11, marker_color)
     
     def _draw_played_notes_overlay(self, played_notes, strum_direction=None, note_colors=None):
         """Draw colored dots over the fretboard showing where user played
