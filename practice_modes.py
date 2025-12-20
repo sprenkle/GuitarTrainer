@@ -19,6 +19,7 @@ class PracticeMode:
         self.menu = menu_system
         self.chord_display = chord_display
         self.new_chord_list_uploaded = False
+        self.last_fret_positions = None  # For live fretboard display optimization
     
     async def run(self):
         """Run the practice mode - override in subclasses"""
@@ -39,16 +40,17 @@ class RegularPracticeMode(PracticeMode):
         self.last_display_update_ms = 0
         self.display_update_interval_ms = 30  # Throttle updates to 30ms (~33 FPS)
         self.collected_strings = [None] * 6
+        self.pressed_frets = [None] * 6
 
     async def run(self):
         """Run regular chord practice"""
-        print("=== PRACTICE MODE STARTING ===")
+        # print("=== PRACTICE MODE STARTING ===")
         if not self.ble.connected or not self.ble.midi_characteristic:
-            print("Not connected")
+            # print("Not connected")
             return 'menu'
         
-        print("Starting regular chord practice...")
-        print(f"Sequence: {self.chord_sequence}")
+        # print("Starting regular chord practice...")
+        # print(f"Sequence: {self.chord_sequence}")
         
         self.detector.reset()
         last_note = None
@@ -61,7 +63,7 @@ class RegularPracticeMode(PracticeMode):
         
         # Display the first target chord
         self.target_chord = self.chord_sequence[self.current_chord_index]
-        print(f"=== DISPLAY CHORD: {self.target_chord} ===")
+        # print(f"=== DISPLAY CHORD: {self.target_chord} ===")
         progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
 
         if self.hide_diagram:
@@ -85,7 +87,7 @@ class RegularPracticeMode(PracticeMode):
             """Handle timeout - reset strum if no completion"""
             await asyncio.sleep_ms(1000)  # Reset display after 500ms if strum not completed
             nonlocal allStringsDetected, notes_hit, timeout_task
-            print("Strum timeout, resetting...")
+            # print("Strum timeout, resetting...")
 
             await self._process_chord_detection()
             
@@ -95,14 +97,14 @@ class RegularPracticeMode(PracticeMode):
             notes_hit = False
             last_note = None
             self.collected_strings = [None] * 6
+            self.pressed_frets = [None] * 6
             started = False
             string_count = 0
 
         started = False
         string_count = 0
 
-
-            # # Reset display to show target chord with white strings
+        # # Reset display to show target chord with white strings
             # # time.sleep_ms(500)
             # progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
             # if self.chord_display:
@@ -139,41 +141,55 @@ class RegularPracticeMode(PracticeMode):
                 
                 # print(f"Parsing MIDI: {data}")
                 msg = self._parse_midi(data)
-                print(f"Parsed: {msg}")
+                # print(f"Parsed: {msg}")
+                if msg and msg[0] == 'fret_on':
+                    self.pressed_frets[msg[1]] = msg[2]
+                    print(f"Fret On: String {msg[1]} Fret {msg[2]} ")
+                    try:
+                        self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text)
+                    except Exception as e:
+                        # print(f"Error in _show_live_fretboard: {e}")
+                        import sys
+                        sys.print_exception(e)
                 
                 if msg and msg[0] == 'note_on':
-                    print(f"--------------------------- {msg} {len(msg)}     --------------------------")
+                    # print(f"--------------------------- {msg} {len(msg)}     --------------------------")
                     
                     note = msg[1]
-                    print(f"Note On: {note}")
-                    
+                    string_num = msg[3] - 1
+                    fret_num = msg[4]
+                    # print(f"Note On: {note}")
+                    print(f"Check It Note On: Note {note} String {string_num} Fret {fret_num} msg={msg}")
+
+
                     # Check for navigation triggers on 22nd fret
                     if note == 86:  # String 1, 22nd fret - Menu
-                        print(f"Menu trigger detected")
+                        # print(f"Menu trigger detected")
                         return 'menu'
 
 
 
                     # Add note to detector
-                    string_num = self.detector.add_note(note)
-                    print(f"String: {string_num}")
+                    self.detector.add_note(note, string_num,fret_num)
+                    # print(f"String: {string_num}")
                     if string_num is None:
-                        print("Unknown string, ignoring note")
+                        # print("Unknown string, ignoring note")
                         continue
 
-                    timeout_task = asyncio.create_task(timeout_handler())
+                    # Cancel existing timeout before creating new one
+                    # if timeout_task is not None:  TODO remove
+                    #     timeout_task.cancel()
 
                     if not started:
-                        if string_num == 6 or string_num == 1:
+                        if False and (string_num == 5 or string_num == 0):
                             started = True
-                            print("Strum started")
+                            # print("Strum started")
                         else:
-                            continue  # Wait for outer strings to start strum
+                            self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text)
 
-                    string_count += 1
-                    print(f"String count: {string_count}")
-                    self.collected_strings[string_count - 1] = note
-
+                    
+                    self.collected_strings[string_num] = note
+                    print(f"Collected strings: {self.collected_strings}")
                     try:
                         self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text)
                     except Exception as e:
@@ -181,34 +197,38 @@ class RegularPracticeMode(PracticeMode):
                         import sys
                         sys.print_exception(e)
 
-                    if string_count <= 6:
-                        continue
+                    # timeout_task = asyncio.create_task(timeout_handler())
+
+                    # Check if we've collected all 6 strings
+                    if any(x is None for x in self.collected_strings):
+                        continue  # Exit the note processing loop
+
+                    print(f"Strings collected so far: {self.collected_strings}")
 
                     if timeout_task is not None:
                         timeout_task.cancel()
 
                     started = False
                     string_count = 0        
-                    print("All strings were struck!")
-                    print("Strum detected, processing chord.........................................")
-                    # Process completed chord
+                    # print("All strings were struck!")
+                    # print("Strum detected, processing chord.........................................")
+                    # Process completed chord (handles display, reset, and index increment)
                     await self._process_chord_detection()
                     
-                    # Update target_chord to the current chord after processing
-                    self.target_chord = self.chord_sequence[self.current_chord_index]
+                    # Update progress text for next chord
                     progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
                     
-                    # Reset for next chord
-                    self.detector.reset()
+                    # Reset strum detection state for next chord
                     allStringsDetected = False
                     notes_hit = False
                     last_note = None
+                    print("Resetting detector and collected strings for next chord")
                     self.collected_strings = [None] * 6
                 
                 await asyncio.sleep_ms(1)
         
         except Exception as e:
-            print(f"Error in practice mode: {e}")
+            # print(f"Error in practice mode: {e}")
             import sys
             sys.print_exception(e)
         
@@ -216,7 +236,7 @@ class RegularPracticeMode(PracticeMode):
 
 
     def _display_chord(self, played_note):
-        print(f"Displaying chord for played note: {played_note}")
+        # print(f"Displaying chord for played note: {played_note}")
         """Display the fretboard with a single string highlighted in green
         
         Args:
@@ -263,14 +283,14 @@ class RegularPracticeMode(PracticeMode):
         Shows the actual fret positions being played on each string.
         Frets are colored green if correct for the chord, red if wrong.
         """
-        print(f"Showing live fretboard for chord: {target_chord}, played_notes={played_notes}")
+        # print(f"Showing live fretboard for chord: {target_chord}, played_notes={played_notes}")
         if not self.chord_display:
             return
-        print("Updating the display with live fretboard")
+        #print("Updating the display with live fretboard")
         
         # Get fret positions for all strings
         fret_positions = self.detector.get_fret_positions()
-        print(f"Fret positions: {fret_positions}")
+        #print(f"Fret positions: {fret_positions}")
         
         # Determine which strings have been struck using detector's string mapping
         # detector.played_notes[i] has the note for string (i+1), or None if not struck
@@ -280,10 +300,10 @@ class RegularPracticeMode(PracticeMode):
             detector_index = 6 - string_num
             # Check if this string has a note in the detector
             if self.detector.played_notes[detector_index] is not None:
-                print(f"String {string_num} was hit")
+                # print(f"String {string_num} was hit")
                 string_colors.append(Colors.GREEN)  # String was hit
             else:
-                print(f"String {string_num} was NOT hit")
+                # print(f"String {string_num} was NOT hit")
                 string_colors.append(Colors.WHITE)  # String not yet hit
         
         # Only redraw the full fretboard when needed - use optimized drawing
@@ -307,20 +327,21 @@ class RegularPracticeMode(PracticeMode):
     
     async def _process_chord_detection(self):
         """Process chord detection result"""
-        print("-----------------------------------------------------------------------------")
+        # print("-----------------------------------------------------------------------------")
         
         # Get played notes BEFORE resetting
         
         is_correct, matching, missing, extra = self.detector.detect_chord(self.collected_strings, self.target_chord)
         
-        print(f">>> Target: {self.target_chord}, Played: {self.collected_strings}, Correct: {is_correct}")
+        # print(f">>> Target: {self.target_chord}, Played: {self.collected_strings}, Correct: {is_correct}")
         if not is_correct:
-            print(f"    Missing: {missing}, Extra: {extra}")
+            pass
+            # print(f"    Missing: {missing}, Extra: {extra}")
         
         progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
         
         if is_correct:
-            print(f">>> SUCCESS! {self.target_chord} Correct!")
+            # print(f">>> SUCCESS! {self.target_chord} Correct!")
             if self.chord_display:
                 self.chord_display.display_correct_chord(self.target_chord, progress_text)
             else:
@@ -333,7 +354,7 @@ class RegularPracticeMode(PracticeMode):
             
             if self.current_chord_index >= len(self.chord_sequence):
                 if self.mode == 'R':
-                    print(">>> Sequence complete! Randomizing...")
+                    # print(">>> Sequence complete! Randomizing...")
                     shuffled = list(self.chord_sequence)
                     n = len(shuffled)
                     for i in range(n - 1, 0, -1):
@@ -342,10 +363,10 @@ class RegularPracticeMode(PracticeMode):
                     self.chord_sequence = shuffled
                     self.current_chord_index = 0
                 else:
-                    print(">>> All chords completed!")
+                    # print(">>> All chords completed!")
                     return 'menu'
         else:
-            print(f"Wrong! Expected {self.target_chord}")
+            # print(f"Wrong! Expected {self.target_chord}")
             if self.chord_display:
                 self.chord_display.display_wrong_chord("???", self.detector.played_notes, self.target_chord, None, progress_text)
                 await asyncio.sleep(1.0)  # Show wrong result for 1 second before moving on
@@ -374,18 +395,22 @@ class RegularPracticeMode(PracticeMode):
     
     def _parse_midi(self, data):
         """Parse MIDI message"""
-        if not data or len(data) < 5:
-            return None
-        
+        # if not data or len(data) < 5:
+        #     return None
+
+        string_num = data[2] & 0x0F
+        # print(f"Parsing MIDI data for string number: {string_num}")
         midi_status = data[2]
-        
+        fret_num = data[4]
+        fret_status = (data[2] & 0xF0) >> 4
         # Note On: 0x90-0x9F
+        # print(f"Parsing MIDI: {data[0]} {data[1]} {data[2]} {data[3]} {data[4]} ")
         if 0x90 <= midi_status <= 0x9F:
             if len(data) >= 5:
                 note = data[3]
                 velocity = data[4]
                 if velocity > 0:
-                    return ('note_on', note, velocity)
+                    return ('note_on', note, velocity, string_num, self.last_fret_positions)
                 else:
                     return ('note_off', note)
         
@@ -394,7 +419,12 @@ class RegularPracticeMode(PracticeMode):
             if len(data) >= 4:
                 note = data[3]
                 return ('note_off', note)
-        
+        elif 176 <= midi_status <= 181:
+            self.last_fret_positions = fret_num
+            # print(f"Parsed MIDI: Program Change on string_num {string_num} FRET {fret_num} Status {fret_status} --------------")
+            return ('fret_on', string_num, fret_num )
+
+
         return None
 
 
@@ -426,7 +456,7 @@ class MetronomePracticeMode(PracticeMode):
     
     async def run(self):
         """Run metronome practice"""
-        print("Starting metronome practice...")
+        # print("Starting metronome practice...")
         await self.metronome.start()
         
         pattern_index = 0

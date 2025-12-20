@@ -19,37 +19,19 @@ class ChordDetector:
                 string_map[midi_note] = string_num
         return string_map
     
-    def add_note(self, note):
+    def add_note(self, note, string_num, fret_num=None):
         """Add a note to the current chord"""
         string_n = self.string_number_map.get(note)
-        print(f"add_note: note={note}, string_n={string_n}  {self.played_notes[4]}")
+        # print(f"add_note: note={note}, string_n={string_n}  {self.played_notes[4]}")
 
         if string_n is None:
             print(f"Note {note} not in string map")
             return None
-
-        special_59 = False
-        if note == 59 and self.played_notes[4] is not None and self.played_notes[3] is None:
-        #     # Special case for open B string (string 2)
-            print(f"Special case: assigning note {note} to string {string_n} -----------------------------------------")
-            string_n = 3
-            special_59 = True
-
-
-
-
+  
         # Reverse array: string 6 at index 0, string 1 at index 5
         string_num = 6 - string_n
-        # Store note on the string, replacing if it's higher (higher fret)
-
-        current_note = self.played_notes[string_num]
-
-
-        if current_note is None or note > current_note:
-            self.played_notes[string_num] = note
-            print(f"Added note {note} to string {string_num + 1}")
-            return string_num
-        
+        self.played_notes[string_num] = note # type: ignore
+        # print(f"Added note {note} to string {string_num + 1}")
         return string_num
     
     def reset(self):
@@ -61,23 +43,32 @@ class ChordDetector:
         return set(n for n in self.played_notes if n is not None)
     
     def detect_chord(self, played_chords, target_chord):
+        print(f"detect_chord: target_chord={target_chord}  played_chords={played_chords}")
         """Check if played notes match target chord (non-open strings only)"""
-        expected_notes = set(CHORD_MIDI_NOTES.get(target_chord, []))
-        played_notes = self.get_played_notes()
+        chord_notes = CHORD_MIDI_NOTES.get(target_chord, [])
+        expected_notes = set(chord_notes)
         
-        # Filter out open strings (fret 0) from expected notes
+        # Convert played_chords list to set, filtering out None values
+        played_notes = set(note for note in played_chords if note is not None)
+
+        # Filter out muted strings (40 = low E string mute in config) from expected notes
+        # But include ALL notes that are actually in the chord definition
         non_open_expected = set()
-        for note in expected_notes:
-            # Check if this note is NOT an open string
-            is_open = note in OPEN_STRING_NOTES
-            if not is_open:
+        for i, note in enumerate(chord_notes):
+            # Check if this note is actually in the chord definition
+            print(f"Check chord_notes: target_chord={target_chord}, string={i}, note={note}")
+            if note is not None:
                 non_open_expected.add(note)
         
-        print(f"detect_chord({target_chord}): expected={expected_notes}, non_open={non_open_expected}, played={played_notes}")
+        print(f"after finding expected detect_chord({target_chord}): expected={expected_notes}, non_open={non_open_expected}, played={played_notes}")
         
         if not non_open_expected:
             return False, None, None, None
         
+        for i in range(6):
+            note = self.played_notes[i]
+            print(f"  string {6 - i}: note={note}")
+
         matching = played_notes.intersection(non_open_expected)
         missing = non_open_expected - played_notes
         extra = played_notes - non_open_expected

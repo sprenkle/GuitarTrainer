@@ -54,27 +54,31 @@ class AerobandBLEMIDI:
         
         BLE MIDI format: [header, timestamp, midi_status, ...midi_data]
         """
+        print(f"Received MIDI data: {data}")
+
         if len(data) < 3:
             return None
         
         # Skip BLE MIDI header and timestamp (first 2 bytes)
         midi_status = data[2]
-        
+              # last_value = 
+        string_num = data[2] & 0x0F
+        print(f"Real String Number: {string_num}")
         # Note On: 0x90-0x9F
         if 0x90 <= midi_status <= 0x9F:
             if len(data) >= 5:
                 note = data[3]
                 velocity = data[4]
                 if velocity > 0:
-                    return ('note_on', note, velocity)
+                    return ('note_on', string_num, note, velocity)
                 else:
-                    return ('note_off', note)
+                    return ('note_off', string_num, note)
         
         # Note Off: 0x80-0x8F
         elif 0x80 <= midi_status <= 0x8F:
             if len(data) >= 4:
                 note = data[3]
-                return ('note_off', note)
+                return ('note_off', string_num, note)
         
         return None
     
@@ -176,6 +180,18 @@ class AerobandBLEMIDI:
         print("Aeroband guitar not found")
         return False
     
+    async def wait_for_midi(self):
+        """Wait for and return the next MIDI message data"""
+        if not self.connected or not self.midi_characteristic:
+            return None
+        
+        try:
+            data = await self.midi_characteristic.notified()
+            return data
+        except Exception as e:
+            print(f"Error waiting for MIDI: {e}")
+            return None
+    
     async def handle_midi(self):
         """Handle incoming MIDI messages and play corresponding tones"""
         if not self.connected or not self.midi_characteristic:
@@ -197,7 +213,7 @@ class AerobandBLEMIDI:
                         note = msg[1]
                         velocity = msg[2]
                         frequency = midi_note_to_frequency(note)
-                        print(f"Note ON: {note} (velocity: {velocity}, freq: {frequency:.1f}Hz)")
+                        print(f"Note ON 123: {note} (velocity: {velocity}, freq: {frequency:.1f}Hz)")
                         
                         self.current_note = note
                         
