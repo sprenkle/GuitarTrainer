@@ -4,7 +4,7 @@ import asyncio
 import urandom
 import utime
 import time
-from config import SELECTION_NOTES, CHORD_MIDI_NOTES, OPEN_STRING_NOTES, Colors
+from config import SELECTION_NOTES, CHORD_MIDI_NOTES, OPEN_STRING_NOTES, Colors, NOTE_NAMES
 from metronome import Metronome
 from chord_detector import ChordDetector
 
@@ -24,6 +24,59 @@ class PracticeMode:
     async def run(self):
         """Run the practice mode - override in subclasses"""
         raise NotImplementedError
+    
+    @staticmethod
+    def get_notes_from_pressed_frets(pressed_frets):
+        """Map pressed frets to their corresponding MIDI notes.
+        
+        Args:
+            pressed_frets: List of 6 integers representing fret positions for each string
+                          (0 = open string/muted, >0 = fret number)
+        
+        Returns:
+            List of 6 MIDI note values corresponding to the pressed frets.
+            Notes are calculated as: OPEN_STRING_NOTE + fret_number
+            0 is used for muted/unreleased strings.
+        
+        Example:
+            pressed_frets = [0, 2, 2, 1, 0, 0]  # C major chord shape
+            notes = get_notes_from_pressed_frets(pressed_frets)
+            # Returns: [64, 61, 57, 51, 45, 40] or similar depending on position
+        """
+        notes = []
+        for string_num, fret_num in enumerate(pressed_frets):
+            if fret_num == 0:
+                # Open string or not pressed
+                notes.append(OPEN_STRING_NOTES[string_num])
+            else:
+                # Calculate MIDI note = open string note + fret number
+                midi_note = OPEN_STRING_NOTES[string_num] + fret_num
+                notes.append(midi_note)
+        return notes
+    
+    @staticmethod
+    def get_note_names_from_pressed_frets(pressed_frets):
+        """Map pressed frets to their corresponding note names.
+        
+        Args:
+            pressed_frets: List of 6 integers representing fret positions for each string
+        
+        Returns:
+            List of 6 note name strings (e.g., ['E', 'B', 'G', 'D', 'A', 'E'])
+        
+        Example:
+            pressed_frets = [0, 0, 0, 0, 0, 0]  # Open strings
+            names = get_note_names_from_pressed_frets(pressed_frets)
+            # Returns: ['E', 'B', 'G', 'D', 'A', 'E']
+        """
+        midi_notes = PracticeMode.get_notes_from_pressed_frets(pressed_frets)
+        note_names = []
+        for midi_note in midi_notes:
+            # Convert MIDI note to note name
+            note_index = midi_note % 12
+            note_name = NOTE_NAMES[note_index]
+            note_names.append(note_name)
+        return note_names
 
 
 class RegularPracticeMode(PracticeMode):
@@ -40,7 +93,7 @@ class RegularPracticeMode(PracticeMode):
         self.last_display_update_ms = 0
         self.display_update_interval_ms = 30  # Throttle updates to 30ms (~33 FPS)
         self.collected_strings = [None] * 6
-        self.pressed_frets = [None] * 6
+        self.pressed_frets = [0] * 6
 
     async def run(self):
         """Run regular chord practice"""
@@ -97,7 +150,7 @@ class RegularPracticeMode(PracticeMode):
             notes_hit = False
             last_note = None
             self.collected_strings = [None] * 6
-            self.pressed_frets = [None] * 6
+            self.pressed_frets = [0] * 6
             started = False
             string_count = 0
 
@@ -143,10 +196,13 @@ class RegularPracticeMode(PracticeMode):
                 msg = self._parse_midi(data)
                 # print(f"Parsed: {msg}")
                 if msg and msg[0] == 'fret_on':
-                    self.pressed_frets[msg[1]] = msg[2]
+                    if msg[3]:  # Pressed
+                        self.pressed_frets[msg[1]] = msg[2]
+                    else:
+                        self.pressed_frets[msg[1]] = 0
                     print(f"Fret On: String {msg[1]} Fret {msg[2]} ")
                     try:
-                        self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text)
+                        self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text, self.pressed_frets)
                     except Exception as e:
                         # print(f"Error in _show_live_fretboard: {e}")
                         import sys
@@ -177,27 +233,27 @@ class RegularPracticeMode(PracticeMode):
                         continue
 
                     # Cancel existing timeout before creating new one
-                    # if timeout_task is not None:  TODO remove
-                    #     timeout_task.cancel()
+                    if timeout_task is not None:  
+                        timeout_task.cancel()
 
                     if not started:
                         if False and (string_num == 5 or string_num == 0):
                             started = True
                             # print("Strum started")
                         else:
-                            self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text)
+                            self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text, self.pressed_frets)
 
                     
                     self.collected_strings[string_num] = note
                     print(f"Collected strings: {self.collected_strings}")
                     try:
-                        self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text)
+                        self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text, self.pressed_frets)
                     except Exception as e:
                         print(f"Error in _show_live_fretboard: {e}")
                         import sys
                         sys.print_exception(e)
 
-                    # timeout_task = asyncio.create_task(timeout_handler())
+                    timeout_task = asyncio.create_task(timeout_handler())
 
                     # Check if we've collected all 6 strings
                     if any(x is None for x in self.collected_strings):
@@ -277,11 +333,18 @@ class RegularPracticeMode(PracticeMode):
 
 
 
-    def _show_live_fretboard(self, target_chord, played_notes, progress_text):
+    def _show_live_fretboard(self, target_chord, played_notes, progress_text, pressed_frets):
         """Display the fretboard in real-time with fret positions shown
         
         Shows the actual fret positions being played on each string.
         Frets are colored green if correct for the chord, red if wrong.
+        Displays white dots at the frets indicated by pressed_frets (0 = open string, erased).
+        
+        Args:
+            target_chord: The target chord name
+            played_notes: Notes detected by the chord detector
+            progress_text: Progress text to display
+            pressed_frets: List of 6 fret positions (0 = open/erase, >0 = fret number)
         """
         # print(f"Showing live fretboard for chord: {target_chord}, played_notes={played_notes}")
         if not self.chord_display:
@@ -322,6 +385,10 @@ class RegularPracticeMode(PracticeMode):
         # Overlay the actual fret positions being played
         if any(f is not None for f in fret_positions):
             self.chord_display._draw_fret_positions(fret_positions, target_chord)
+        
+        # Draw white dots at the pressed frets (non-zero values in pressed_frets)
+        if any(f > 0 for f in pressed_frets):
+            self.chord_display._draw_fret_positions(pressed_frets, target_chord)
         
         self.display.tft.show()
     
@@ -401,10 +468,11 @@ class RegularPracticeMode(PracticeMode):
         string_num = data[2] & 0x0F
         # print(f"Parsing MIDI data for string number: {string_num}")
         midi_status = data[2]
+
         fret_num = data[4]
-        fret_status = (data[2] & 0xF0) >> 4
+        fret_status = data[3]
         # Note On: 0x90-0x9F
-        # print(f"Parsing MIDI: {data[0]} {data[1]} {data[2]} {data[3]} {data[4]} ")
+        print(f"Parsing MIDI: {data[0]} {data[1]} {data[2]} {data[3]} {data[4]} ")
         if 0x90 <= midi_status <= 0x9F:
             if len(data) >= 5:
                 note = data[3]
@@ -421,8 +489,8 @@ class RegularPracticeMode(PracticeMode):
                 return ('note_off', note)
         elif 176 <= midi_status <= 181:
             self.last_fret_positions = fret_num
-            # print(f"Parsed MIDI: Program Change on string_num {string_num} FRET {fret_num} Status {fret_status} --------------")
-            return ('fret_on', string_num, fret_num )
+            print(f"Parsed MIDI: Program Change on string_num {string_num} FRET {fret_num} Status {fret_status} --------------")
+            return ('fret_on', string_num, fret_num, fret_status == 49)
 
 
         return None
