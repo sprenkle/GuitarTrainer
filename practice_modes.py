@@ -175,36 +175,43 @@ class RegularPracticeMode(PracticeMode):
 
         try:
             while self.ble.connected:
-                # print("Waiting for MIDI...")
                 # Check for new chord list upload
                 if self.new_chord_list_uploaded:
                     self.new_chord_list_uploaded = False
                     return 'menu'
                 
-                # Wait for MIDI data
-                try:
-                    data = await self.ble.wait_for_midi()
-                    # if data:
-                    #     print(f"Got MIDI: {data}")
-                except asyncio.TimeoutError:
-                    pass
+                # Get MIDI data from the queue (non-blocking)
+                data = self.ble.wait_for_queued_midi()
                 
                 if not data:
+                    # No messages in queue, sleep briefly to avoid busy-waiting
+                    await asyncio.sleep_ms(1)
                     continue
                 
-                # print(f"Parsing MIDI: {data}")
+                # Process the queued message
                 msg = self._parse_midi(data)
                 # print(f"Parsed: {msg}")
+                
+                # Handle fret press/release messages
                 if msg and msg[0] == 'fret_on':
-                    if msg[3]:  # Pressed
-                        self.pressed_frets[msg[1]] = msg[2]
-                    else:
-                        self.pressed_frets[msg[1]] = 0
-                    print(f"Fret On: String {msg[1]} Fret {msg[2]} ")
+                    # Fret pressed
+                    self.pressed_frets[msg[1]] = msg[2]
+                    print(f"Fret On: String {msg[1]} Fret {msg[2]}")
                     try:
                         self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text, self.pressed_frets)
                     except Exception as e:
-                        # print(f"Error in _show_live_fretboard: {e}")
+                        print(f"Error in _show_live_fretboard: {e}")
+                        import sys
+                        sys.print_exception(e)
+                
+                elif msg and msg[0] == 'fret_off':
+                    # Fret released
+                    self.pressed_frets[msg[1]] = 0
+                    print(f"Fret Off: String {msg[1]}")
+                    try:
+                        self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text, self.pressed_frets)
+                    except Exception as e:
+                        print(f"Error in _show_live_fretboard: {e}")
                         import sys
                         sys.print_exception(e)
                 
@@ -401,9 +408,9 @@ class RegularPracticeMode(PracticeMode):
         is_correct, matching, missing, extra = self.detector.detect_chord(self.collected_strings, self.target_chord)
         
         # print(f">>> Target: {self.target_chord}, Played: {self.collected_strings}, Correct: {is_correct}")
-        if not is_correct:
-            pass
-            # print(f"    Missing: {missing}, Extra: {extra}")
+        # if not is_correct:
+        #     pass
+        #     # print(f"    Missing: {missing}, Extra: {extra}")
         
         progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
         
@@ -461,40 +468,53 @@ class RegularPracticeMode(PracticeMode):
             self.display.show()
     
     def _parse_midi(self, data):
-        """Parse MIDI message"""
-        # if not data or len(data) < 5:
-        #     return None
-
-        string_num = data[2] & 0x0F
-        # print(f"Parsing MIDI data for string number: {string_num}")
-        midi_status = data[2]
-
-        fret_num = data[4]
-        fret_status = data[3]
+        """Parse MIDI message
+        
+        Expects individual MIDI messages (2-3 bytes) without BLE header/timestamp:
+        - Note On: [0x90-0x9F, note, velocity]
+        - Note Off: [0x80-0x8F, note]
+        - Program Change: [0xB0-0xBF, controller, value] (fret press/release info)
+        """
+        if not data or len(data) < 2:
+            return None
+        
+        midi_status = data[0]
+        
         # Note On: 0x90-0x9F
-        print(f"Parsing MIDI: {data[0]} {data[1]} {data[2]} {data[3]} {data[4]} ")
         if 0x90 <= midi_status <= 0x9F:
-            if len(data) >= 5:
-                note = data[3]
-                velocity = data[4]
+            if len(data) >= 3:
+                note = data[1]
+                velocity = data[2]
+                string_num = midi_status & 0x0F
                 if velocity > 0:
+                    print(f"Parsed MIDI Note On: Note {note} Velocity {velocity} String {string_num}")
                     return ('note_on', note, velocity, string_num, self.last_fret_positions)
                 else:
                     return ('note_off', note)
         
         # Note Off: 0x80-0x8F
         elif 0x80 <= midi_status <= 0x8F:
-            if len(data) >= 4:
-                note = data[3]
+            if len(data) >= 2:
+                note = data[1]
+                string_num = midi_status & 0x0F
+                print(f"Parsed MIDI Note Off: Note {note} String {string_num}")
                 return ('note_off', note)
-        elif 176 <= midi_status <= 181:
-            self.last_fret_positions = fret_num
-            print(f"Parsed MIDI: Program Change on string_num {string_num} FRET {fret_num} Status {fret_status} --------------")
-            return ('fret_on', string_num, fret_num, fret_status == 49)
-
-
+        
+        # Control Change / Program Change for fret info: 0xB0-0xBF
+        elif 0xB0 <= midi_status <= 0xBF:
+            if len(data) >= 3:
+                string_num = midi_status & 0x0F
+                controller = data[1]
+                value = data[2]
+                self.last_fret_positions = value
+                print(f"Parsed MIDI Control: String {string_num} Controller {controller} Value {value}")
+                # Return 'fret_on' when pressed (value > 0), 'fret_off' when released (value=0)
+                if value > 0:
+                    return ('fret_on', string_num, value, True)
+                else:
+                    return ('fret_off', string_num, value, False)
+        
         return None
-
 
 class MetronomePracticeMode(PracticeMode):
     """Metronome practice mode"""

@@ -1,13 +1,27 @@
 """
-Simple MIDI debug script - connects to Aeroband and displays all MIDI messages
+Simple MIDI debug script - connects to Aeroband using ble_connection and displays all MIDI messages
 """
 
 import asyncio
-from aeroband_ble_midi import AerobandBLEMIDI
+from ble_connection import BLEConnectionManager
+
+
+class MockDisplay:
+    """Mock display for ble_connection that just prints to console"""
+    def clear(self):
+        pass
+    
+    def text(self, text, x, y):
+        print(f"[Display] {text}")
+    
+    def show(self):
+        pass
+
 
 class MIDIDebugger:
     def __init__(self):
-        self.ble = AerobandBLEMIDI()
+        self.display = MockDisplay()
+        self.ble = BLEConnectionManager(self.display)
         self.note_names = {
             0: 'C-1', 1: 'C#-1', 2: 'D-1', 3: 'D#-1', 4: 'E-1', 5: 'F-1',
             6: 'F#-1', 7: 'G-1', 8: 'G#-1', 9: 'A-1', 10: 'A#-1', 11: 'B-1',
@@ -32,49 +46,108 @@ class MIDIDebugger:
         """Get friendly note name from MIDI note number"""
         return self.note_names.get(midi_note, f'Unknown({midi_note})')
 
+    @staticmethod
+    def parse_midi_messages(data):
+        """
+        Parse BLE MIDI notification and extract ALL MIDI commands
+        
+        BLE MIDI format: [header, timestamp, midi_status, midi_data1, midi_data2, ...]
+        A single notification can contain multiple MIDI messages
+        Returns a list of parsed messages
+        """
+        messages = []
+        
+        if len(data) < 3:
+            return messages
+        
+        # BLE MIDI packet format:
+        # Bytes 0-1: BLE MIDI header and timestamp
+        # Bytes 2+: MIDI message(s)
+        
+        i = 2
+        while i < len(data):
+            midi_status = data[i]
+            
+            # Note On: 0x90-0x9F
+            if 0x90 <= midi_status <= 0x9F:
+                if i + 2 < len(data):
+                    note = data[i + 1]
+                    velocity = data[i + 2]
+                    string_num = midi_status & 0x0F
+                    if velocity > 0:
+                        messages.append(('note_on', string_num, note, velocity))
+                    else:
+                        messages.append(('note_off', string_num, note))
+                    i += 3
+                else:
+                    break
+            
+            # Note Off: 0x80-0x8F
+            elif 0x80 <= midi_status <= 0x8F:
+                if i + 1 < len(data):
+                    note = data[i + 1]
+                    string_num = midi_status & 0x0F
+                    messages.append(('note_off', string_num, note))
+                    i += 2
+                else:
+                    break
+            
+            # Unknown status byte, skip it
+            else:
+                i += 1
+        
+        return messages
+
     async def run(self):
         """Main debug loop"""
-        print("=== MIDI DEBUG MONITOR ===\n")
+        print("=== MIDI DEBUG MONITOR (using ble_connection) ===\n")
         
-        # Connect to Aeroband
+        # Connect to Aeroband using BLEConnectionManager
         print("Connecting to Aeroband guitar...")
-        await self.ble.scan_and_connect()
-        
-        if not self.ble.connected:
+        if not await self.ble.scan_and_connect():
             print("Failed to connect!")
             return
         
         print("Connected! Listening for MIDI messages...\n")
-        last_value = None
+        message_count = 0
+        
         try:
             while self.ble.connected:
                 try:
-                    # Wait for MIDI data
-                    data = await self.ble.wait_for_midi()
+                    # Get MIDI data from the queued messages
+                    data = self.ble.wait_for_queued_midi(timeout_ms=100)
                     
                     if data:
                         # Display raw bytes
                         hex_str = ' '.join(f'{b:02x}' for b in data)
-                        print(f"Raw MIDI2: string{data[2]}   {hex_str} {data}")
-                        # last_value = 
-                        string_num = data[2] & 0x0F
-                        fret_num = (data[4])
-                        print(f"String Number: {string_num} Fret Number: {fret_num}")
-                        # Parse and display
-                        msg = self.ble.parse_midi_message(data)
-                        if msg:
-                            if msg[0] == 'note_on':
-                                note_name = self.get_note_name(msg[1])
-                                print(f"  ✓ NOTE ON  - Note: {msg[1]:3d} ({note_name:4s}) Velocity: {msg[2]:3d}")
-                            elif msg[0] == 'note_off':
-                                note_name = self.get_note_name(msg[1])
-                                print(f"  ✗ NOTE OFF - Note: {msg[1]:3d} ({note_name:4s})")
-                        else:
-                            print(f"  ? Unknown MIDI message")
-                        print()
+                        # print(f"[Notification {data}")
                         
-                except asyncio.TimeoutError:
-                    pass
+                        # Parse ALL MIDI messages from this notification
+                        messages = self.parse_midi_messages(data)
+                        
+                        if messages:
+                            for msg in messages:
+                                if msg[0] == 'note_on':
+                                    string_num = msg[1]
+                                    note = msg[2]
+                                    velocity = msg[3]
+                                    note_name = self.get_note_name(note)
+                                    print(f"  ✓ NOTE ON  - String: {string_num} Note: {note:3d} ({note_name:4s}) Velocity: {velocity:3d}")
+                                elif msg[0] == 'note_off':
+                                    string_num = msg[1]
+                                    note = msg[2]
+                                    note_name = self.get_note_name(note)
+                                    print(f"  ✗ NOTE OFF - String: {string_num} Note: {note:3d} ({note_name:4s})")
+                        else:
+                            pass
+                            # print("  (No valid MIDI messages found)")
+                        
+                       
+                        message_count += 1
+                    else:
+                        # Small sleep to prevent busy-waiting when no data
+                        await asyncio.sleep_ms(10)
+                        
                 except Exception as e:
                     print(f"Error: {e}")
                     import sys
@@ -84,8 +157,7 @@ class MIDIDebugger:
             print("\nDebug monitor stopped")
         
         finally:
-            if self.ble.connection:
-                await self.ble.connection.disconnect()
+            await self.ble.disconnect()
 
 
 async def main():
