@@ -190,7 +190,7 @@ class RegularPracticeMode(PracticeMode):
                 
                 # Process the queued message
                 msg = self._parse_midi(data)
-                # print(f"Parsed: {msg}")
+                print(f"Parsed: {msg}")
                 
                 # Handle fret press/release messages
                 if msg and msg[0] == 'fret_on':
