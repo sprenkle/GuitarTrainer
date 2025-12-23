@@ -26,6 +26,7 @@ class MenuSystem:
             data = self.ble.wait_for_queued_midi()
             
             if data:
+                print(f"[MENU] Received MIDI data: {' '.join(f'{b:02x}' for b in data)}")
                 msg = self._parse_midi(data)
                 
                 # Debug: show all note messages
@@ -33,16 +34,16 @@ class MenuSystem:
                     if msg[0] == 'note_on':
                         note = msg[1]
                         velocity = msg[2]
-                        print(f"Got Note On: {note}")
+                        print(f"[MENU] Got Note On: {note} velocity: {velocity}")
                         
                         # Navigation controls
                         if note == 86:  # String 1, 22nd fret - Next page
-                            print("Next page")
+                            print("[MENU] Next page")
                             if (page + 1) * items_per_page < len(PRACTICE_OPTIONS):
                                 page += 1
                             continue
                         elif note == 81:  # String 2, 22nd fret - Previous page
-                            print("Previous page")
+                            print("[MENU] Previous page")
                             if page > 0:
                                 page -= 1
                             continue
@@ -50,12 +51,13 @@ class MenuSystem:
                         # Check if it's a 22nd fret selection (strings 3-6 = indices 2-5)
                         if note in SELECTION_NOTES:
                             string_num = SELECTION_NOTES.index(note)
+                            print(f"[MENU] Selection note detected: note={note}, string={string_num}")
                             # Only select if it's strings 3-6 (indices 2-5)
                             if string_num >= 2:
                                 selected_index = page * items_per_page + (string_num - 2)
                                 if selected_index < len(PRACTICE_OPTIONS):
                                     selected_chords = list(PRACTICE_OPTIONS[selected_index][1])
-                                    print(f"Selected: {PRACTICE_OPTIONS[selected_index][0]}")
+                                    print(f"[MENU] Selected: {PRACTICE_OPTIONS[selected_index][0]}")
                                     
                                     # Flash selection
                                     self.display.clear()
@@ -66,6 +68,7 @@ class MenuSystem:
                                     
                                     return selected_chords
                     elif msg[0] == 'note_off':
+                        print(f"[MENU] Got Note Off: {msg[1]}")
                         pass  # Ignore note off
             else:
                 # No messages in queue, sleep briefly

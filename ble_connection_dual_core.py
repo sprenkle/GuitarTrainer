@@ -1,26 +1,35 @@
-# BLE Connection Manager
+# BLE Connection Manager - Dual Core Version (Shared Queue for Inter-core Communication)
+# Note: BLE operations must remain on CPU0 (asyncio is CPU0-only)
+# This version uses a SharedMIDIMessageQueue for thread-safe communication
 
 import asyncio
 import aioble
 import network
+import _thread
+import time
 from config import MIDI_SERVICE_UUID, MIDI_CHAR_UUID
 
 
-class MIDIMessageQueue:
-    """Simple FIFO queue for MIDI messages with size limit"""
+class SharedMIDIMessageQueue:
+    """Thread-safe FIFO queue for MIDI messages with size limit
     
-    def __init__(self, max_size=128):
+    This queue is designed to be shared between two CPU cores.
+    Uses locks to ensure thread-safe access.
+    """
+    
+    def __init__(self, max_size=256):
         """Initialize the message queue
         
         Args:
-            max_size: Maximum number of messages to buffer (default 128)
+            max_size: Maximum number of messages to buffer (default 256)
         """
         self.messages = []
         self.max_size = max_size
-        self.dropped_count = 0  # Track dropped messages
+        self.dropped_count = 0
+        self._lock = _thread.allocate_lock()
     
     def put(self, message):
-        """Add a message to the queue
+        """Add a message to the queue (thread-safe)
         
         Args:
             message: MIDI message data (bytes)
@@ -28,57 +37,74 @@ class MIDIMessageQueue:
         Returns:
             True if message was queued, False if queue was full and message was dropped
         """
-        if len(self.messages) >= self.max_size:
-            self.dropped_count += 1
-            print(f"WARNING: MIDI message queue full! Dropped message #{self.dropped_count}")
-            return False
-        
-        self.messages.append(message)
-        return True
+        with self._lock:
+            if len(self.messages) >= self.max_size:
+                self.dropped_count += 1
+                print(f"WARNING: MIDI message queue full! Dropped message #{self.dropped_count}")
+                return False
+            
+            self.messages.append(message)
+            return True
     
     def get(self):
-        """Get the next message from the queue
+        """Get the next message from the queue (thread-safe)
         
         Returns:
             Message data if available, None if queue is empty
         """
-        if len(self.messages) > 0:
-            return self.messages.pop(0)
-        return None
+        with self._lock:
+            if len(self.messages) > 0:
+                return self.messages.pop(0)
+            return None
     
     def size(self):
         """Get current queue size"""
-        return len(self.messages)
+        with self._lock:
+            return len(self.messages)
     
     def is_empty(self):
         """Check if queue is empty"""
-        return len(self.messages) == 0
+        with self._lock:
+            return len(self.messages) == 0
     
     def clear(self):
         """Clear all messages from the queue"""
-        self.messages = []
-        self.dropped_count = 0
+        with self._lock:
+            self.messages = []
+            self.dropped_count = 0
     
     def get_stats(self):
         """Get queue statistics"""
-        return {
-            'size': len(self.messages),
-            'max_size': self.max_size,
-            'dropped': self.dropped_count,
-            'usage_percent': (len(self.messages) / self.max_size) * 100
-        }
+        with self._lock:
+            return {
+                'size': len(self.messages),
+                'max_size': self.max_size,
+                'dropped': self.dropped_count,
+                'usage_percent': (len(self.messages) / self.max_size) * 100
+            }
 
 
-class BLEConnectionManager:
-    """Manages BLE connections to MIDI devices"""
+class BLEConnectionManagerDualCore:
+    """Manages BLE connections to MIDI devices using shared queue for inter-core communication
     
-    def __init__(self, display_manager):
+    BLE operations must run on CPU0 (asyncio requirement)
+    SharedMIDIMessageQueue enables thread-safe MIDI message passing to other tasks/cores
+    CPU0 main loop reads messages at its own pace via the queue
+    """
+    
+    def __init__(self, display_manager, shared_queue=None):
         self.display = display_manager
         self.connection = None
         self.midi_characteristic = None
         self.connected = False
-        self.message_queue = MIDIMessageQueue(max_size=128)  # Create message queue
-        self.background_task = None  # Task for reading MIDI in background
+        
+        # Use provided queue or create a new one
+        if shared_queue is None:
+            self.message_queue = SharedMIDIMessageQueue(max_size=256)
+        else:
+            self.message_queue = shared_queue
+        
+        self.background_task = None
     
     async def scan_and_connect(self, timeout_ms=5000):
         """Scan for and connect to Aeroband guitar"""
@@ -157,7 +183,7 @@ class BLEConnectionManager:
                             
                             self.connected = True
                             
-                            # Start background MIDI reader task
+                            # Start background MIDI reader task on CPU0 (async)
                             self.start_background_reader()
                             
                             self.display.clear()
@@ -179,7 +205,6 @@ class BLEConnectionManager:
         
         except Exception as e:
             print(f"Scan failed: {e}")
-            # Note: traceback module not available in MicroPython
         
         print(f"Scan completed. Found {found_count} devices total")
         print("Aeroband guitar not found")
@@ -187,6 +212,8 @@ class BLEConnectionManager:
     
     async def disconnect(self):
         """Disconnect from device"""
+        self.connected = False
+        
         if self.background_task:
             try:
                 self.background_task.cancel()
@@ -199,7 +226,6 @@ class BLEConnectionManager:
                 await self.connection.disconnect()
             except:
                 pass
-            self.connected = False
             self.midi_characteristic = None
         
         self.message_queue.clear()
@@ -207,16 +233,19 @@ class BLEConnectionManager:
     async def _background_midi_reader(self):
         """Background task that continuously reads MIDI messages and queues them
         
-        This task runs in the background and reads from the MIDI characteristic,
+        This task runs in the background on CPU0 and reads from the MIDI characteristic,
         parsing BLE MIDI notifications and adding each individual MIDI message 
-        to the message queue. This prevents messages from being lost when the main 
+        to the shared queue. This prevents messages from being lost when the main 
         loop is processing other tasks.
         """
+        print("[CPU0] Background MIDI reader started")
+        message_count = 0
+        
         while self.connected and self.midi_characteristic:
             try:
                 # Use a short timeout to allow other tasks to run
                 try:
-                    data = await asyncio.wait_for(self.midi_characteristic.notified(), timeout=1000)
+                    data = await asyncio.wait_for(self.midi_characteristic.notified(), timeout=1.0)
                 except asyncio.TimeoutError:
                     # Normal timeout, yield to other tasks
                     await asyncio.sleep_ms(1)
@@ -231,63 +260,28 @@ class BLEConnectionManager:
                         # Queue each individual MIDI message
                         for msg in messages:
                             self.message_queue.put(msg)
+                            message_count += 1
                         
                         hex_str = ' '.join(f'{b:02x}' for b in data)
-                        print(f"[BLE] Received notification with {len(messages)} MIDI message(s): {hex_str}")
+                        print(f"[CPU0] #{message_count} Received notification with {len(messages)} MIDI message(s): {hex_str}")
                         
                         # Optionally log queue status when messages are dropped
                         stats = self.message_queue.get_stats()
-                        if stats['dropped'] > 0:
-                            print(f"MIDI Queue: {stats['size']}/{stats['max_size']} messages, "
+                        if stats['dropped'] > 0 or message_count <= 5:  # Log first few messages
+                            print(f"[CPU0] Queue: {stats['size']}/{stats['max_size']} messages, "
                                   f"{stats['dropped']} dropped")
             except Exception as e:
                 # Log error but continue running
-                print(f"MIDI reader error: {e}")
+                print(f"[CPU0] MIDI reader error: {type(e).__name__}: {e}")
                 await asyncio.sleep_ms(1)
+        
+        print(f"[CPU0] Background MIDI reader stopped (received {message_count} total messages)")
     
     def start_background_reader(self):
         """Start the background MIDI reader task"""
         if not self.background_task:
             self.background_task = asyncio.create_task(self._background_midi_reader())
-            print("Background MIDI reader started")
-    
-    @staticmethod
-    def _count_midi_messages(data):
-        """Count how many MIDI messages are in a BLE notification
-        
-        BLE MIDI format: [header, timestamp, midi_status, midi_data1, midi_data2, ...]
-        A single notification can contain multiple MIDI messages
-        """
-        if len(data) < 3:
-            return 0
-        
-        message_count = 0
-        i = 2  # Skip BLE header and timestamp
-        
-        while i < len(data):
-            midi_status = data[i]
-            
-            # Note On: 0x90-0x9F
-            if 0x90 <= midi_status <= 0x9F:
-                if i + 2 < len(data):
-                    message_count += 1
-                    i += 3
-                else:
-                    break
-            
-            # Note Off: 0x80-0x8F
-            elif 0x80 <= midi_status <= 0x8F:
-                if i + 1 < len(data):
-                    message_count += 1
-                    i += 2
-                else:
-                    break
-            
-            # Other MIDI messages - skip unknown status bytes
-            else:
-                i += 1
-        
-        return message_count
+            print("[CPU0] Background MIDI reader task created")
     
     @staticmethod
     def _parse_midi_messages(data):
@@ -335,7 +329,7 @@ class BLEConnectionManager:
         return messages
     
     def wait_for_queued_midi(self, timeout_ms=100):
-        """Get the next queued MIDI message (non-blocking)
+        """Get the next queued MIDI message (non-blocking, thread-safe)
         
         Args:
             timeout_ms: Timeout in milliseconds (currently not used, returns immediately)
@@ -356,5 +350,4 @@ class BLEConnectionManager:
             print(f"DEBUG BLE: Received notification: {data}")
             return data
         except asyncio.TimeoutError:
-            #print(f"DEBUG BLE: Wait timeout")
             return None
