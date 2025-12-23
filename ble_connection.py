@@ -243,7 +243,7 @@ class BLEConnectionManager:
             except Exception as e:
                 # Log error but continue running
                 print(f"MIDI reader error: {e}")
-                # await asyncio.sleep_ms(10)
+                await asyncio.sleep_ms(1)
     
     def start_background_reader(self):
         """Start the background MIDI reader task"""
@@ -329,7 +329,7 @@ class BLEConnectionManager:
             
             # Other MIDI messages - skip unknown status bytes
             else:
-                i += 1
+                print(f"Unknown MIDI status byte: {midi_status:02x}, skipping")                i += 1
         
         return messages
     

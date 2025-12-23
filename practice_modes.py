@@ -216,24 +216,48 @@ class RegularPracticeMode(PracticeMode):
                         sys.print_exception(e)
                 
                 if msg and msg[0] == 'note_on':
-                    # print(f"--------------------------- {msg} {len(msg)}     --------------------------")
-                    
                     note = msg[1]
-                    string_num = msg[3] - 1
-                    fret_num = msg[4]
-                    # print(f"Note On: {note}")
+                    velocity = msg[2]
+                    
+                    # Calculate string and fret from MIDI note
+                    from config import OPEN_STRING_NOTES
+                    string_num = None
+                    fret_num = None
+                    
+                    # Try to find which string this note belongs to
+                    for string_idx, open_note in enumerate(OPEN_STRING_NOTES):
+                        if note >= open_note:
+                            potential_fret = note - open_note
+                            if 0 <= potential_fret <= 24:  # Valid fret range
+                                string_num = string_idx
+                                fret_num = potential_fret
+                                break
+                    
                     print(f"Check It Note On: Note {note} String {string_num} Fret {fret_num} msg={msg}")
-
 
                     # Check for navigation triggers on 22nd fret
                     if note == 86:  # String 1, 22nd fret - Menu
                         # print(f"Menu trigger detected")
                         return 'menu'
 
-
+                    # Update pressed frets for visual display
+                    if string_num is not None and fret_num is not None:
+                        self.pressed_frets[string_num] = fret_num
+                        print(f"Updated pressed_frets[{string_num}] = {fret_num}")
+                        try:
+                            self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text, self.pressed_frets)
+                        except Exception as e:
+                            print(f"Error in _show_live_fretboard: {e}")
+                            import sys
+                            sys.print_exception(e)
 
                     # Add note to detector
-                    self.detector.add_note(note, string_num,fret_num)
+                    if string_num is not None and fret_num is not None:
+                        self.detector.add_note(note, string_num, fret_num)
+                    else:
+                        # Unknown string, still add to detector but with calculated values
+                        self.detector.add_note(note, 0, 0)
+                    
                     # print(f"String: {string_num}")
                     if string_num is None:
                         # print("Unknown string, ignoring note")
@@ -287,6 +311,35 @@ class RegularPracticeMode(PracticeMode):
                     last_note = None
                     print("Resetting detector and collected strings for next chord")
                     self.collected_strings = [None] * 6
+                
+                # Handle note off to clear pressed frets
+                elif msg and msg[0] == 'note_off':
+                    note = msg[1]
+                    
+                    # Calculate string and fret from MIDI note
+                    from config import OPEN_STRING_NOTES
+                    string_num = None
+                    
+                    # Try to find which string this note belongs to
+                    for string_idx, open_note in enumerate(OPEN_STRING_NOTES):
+                        if note >= open_note:
+                            potential_fret = note - open_note
+                            if 0 <= potential_fret <= 24:  # Valid fret range
+                                string_num = string_idx
+                                break
+                    
+                    print(f"Note Off: Note {note} String {string_num}")
+                    
+                    # Clear the pressed fret for this string
+                    if string_num is not None:
+                        self.pressed_frets[string_num] = 0
+                        print(f"Cleared pressed_frets[{string_num}]")
+                        try:
+                            self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text, self.pressed_frets)
+                        except Exception as e:
+                            print(f"Error in _show_live_fretboard: {e}")
+                            import sys
+                            sys.print_exception(e)
                 
                 await asyncio.sleep_ms(1)
         
