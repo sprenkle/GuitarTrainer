@@ -3,7 +3,7 @@ Simple MIDI debug script - connects to Aeroband using ble_connection and display
 """
 
 import asyncio
-from ble_connection import BLEConnectionManager
+from ble_connection_dual_core import BLEConnectionManagerDualCore
 
 
 class MockDisplay:
@@ -21,7 +21,7 @@ class MockDisplay:
 class MIDIDebugger:
     def __init__(self):
         self.display = MockDisplay()
-        self.ble = BLEConnectionManager(self.display)
+        self.ble = BLEConnectionManagerDualCore(self.display)
         self.note_names = {
             0: 'C-1', 1: 'C#-1', 2: 'D-1', 3: 'D#-1', 4: 'E-1', 5: 'F-1',
             6: 'F#-1', 7: 'G-1', 8: 'G#-1', 9: 'A-1', 10: 'A#-1', 11: 'B-1',

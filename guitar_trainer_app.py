@@ -2,7 +2,7 @@
 
 import asyncio
 from display_manager import DisplayManager
-from ble_connection import BLEConnectionManager
+from ble_connection_dual_core import BLEConnectionManagerDualCore
 from menu_system import MenuSystem
 from chord_detector import ChordDetector
 from chord_display import ChordDisplay
@@ -20,7 +20,7 @@ class GuitarTrainerApp:
     def __init__(self, tft):
         # Initialize managers
         self.display = DisplayManager(tft)
-        self.ble = BLEConnectionManager(self.display)
+        self.ble = BLEConnectionManagerDualCore()
         self.menu = MenuSystem(self.display, self.ble)
         self.detector = ChordDetector()
         self.chord_display = ChordDisplay(self.display)

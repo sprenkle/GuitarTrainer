@@ -293,6 +293,10 @@ class BLEConnectionManagerDualCore:
         """
         messages = []
         
+        # Convert to bytes if it's a generator or other iterable
+        if not isinstance(data, (bytes, bytearray)):
+            data = bytes(data)
+        
         if len(data) < 3:
             return messages
         
@@ -300,28 +304,32 @@ class BLEConnectionManagerDualCore:
         
         while i < len(data):
             midi_status = data[i]
-            
-            # Note On: 0x90-0x9F
-            if 0x90 <= midi_status <= 0x9F:
+            command = midi_status & 0xF0
+            string_number = (midi_status & 0xF0) >> 4
+            # 3-byte messages: Note On (0x90-0x9F), Control Change (0xB0-0xBF), Pitch Wheel (0xE0-0xEF)
+            if (0x80 == command or
+                0x90 == command or
+                0xA0 == command or 
+                0xB0 == command or 
+                0xE0 == command):
                 if i + 2 < len(data):
-                    # Extract a 3-byte Note On message
-                    msg = bytes([data[i], data[i+1], data[i+2]])
+                    msg = bytes([command, string_number, data[i+1], data[i+2]])
                     messages.append(msg)
                     i += 3
                 else:
                     break
             
-            # Note Off: 0x80-0x8F
-            elif 0x80 <= midi_status <= 0x8F:
+            # 2-byte messages: Note Off (0x80-0x8F), Program Change (0xC0-0xCF), Channel Pressure (0xD0-0xDF)
+            elif (0xC0 == command or 
+                  0xD0 == command):
                 if i + 1 < len(data):
-                    # Extract a 2-byte Note Off message
-                    msg = bytes([data[i], data[i+1]])
+                    msg = bytes([command, string_number, data[i+1]])
                     messages.append(msg)
                     i += 2
                 else:
                     break
             
-            # Other MIDI messages - skip unknown status bytes
+            # System messages and other status bytes
             else:
                 print(f"Unknown MIDI status byte: {midi_status:02x}, skipping")
                 i += 1
