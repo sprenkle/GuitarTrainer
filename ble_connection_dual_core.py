@@ -305,7 +305,7 @@ class BLEConnectionManagerDualCore:
         while i < len(data):
             midi_status = data[i]
             command = midi_status & 0xF0
-            string_number = (midi_status & 0xF0) >> 4
+            string_number = midi_status & 0x0F
             # 3-byte messages: Note On (0x90-0x9F), Control Change (0xB0-0xBF), Pitch Wheel (0xE0-0xEF)
             if (0x80 == command or
                 0x90 == command or
@@ -313,7 +313,7 @@ class BLEConnectionManagerDualCore:
                 0xB0 == command or 
                 0xE0 == command):
                 if i + 2 < len(data):
-                    msg = bytes([command, string_number, data[i+1], data[i+2]])
+                    msg = [command, string_number, data[i+1], data[i+2]]
                     messages.append(msg)
                     i += 3
                 else:
@@ -323,7 +323,7 @@ class BLEConnectionManagerDualCore:
             elif (0xC0 == command or 
                   0xD0 == command):
                 if i + 1 < len(data):
-                    msg = bytes([command, string_number, data[i+1]])
+                    msg = [command, string_number, data[i+1]]
                     messages.append(msg)
                     i += 2
                 else:
