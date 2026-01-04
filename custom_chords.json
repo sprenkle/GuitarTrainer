@@ -1,4 +1,6 @@
 [
+  ["G Major", ["R", "G", "D", "Em", "C"]],
+  ["G Major", ["H", "G", "D", "Em", "C"]],
   ["All Chords", ["R", "A", "Am", "A7", "B", "Bm", "B7", "C", "C7", "D", "Dm", "D7", "E", "Em", "E7", "F", "Fm", "F7", "G", "Gm", "G7", "D6/9", "G/B", "Am7", "D7/F#"]],
   ["All Chords", ["H", "A", "Am", "A7", "B", "Bm", "B7", "C", "C7", "D", "Dm", "D7", "E", "Em", "E7", "F", "Fm", "F7", "G", "Gm", "G7", "D6/9", "G/B", "Am7", "D7/F#"]],
   ["A Major & 7", ["R", "A", "A7", "Am"]],

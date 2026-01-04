@@ -17,10 +17,14 @@ class GuitarTrainerApp:
     METRODOME = 'M'
     HIDDE_DIAGRAM = 'H'
 
-    def __init__(self, tft):
+    def __init__(self, tft, ble_manager=None):
         # Initialize managers
         self.display = DisplayManager(tft)
-        self.ble = BLEConnectionManagerDualCore()
+        # Use provided BLE manager or create a new one
+        if ble_manager is not None:
+            self.ble = ble_manager
+        else:
+            self.ble = BLEConnectionManagerDualCore(self.display)
         self.menu = MenuSystem(self.display, self.ble)
         self.detector = ChordDetector()
         self.chord_display = ChordDisplay(self.display)
@@ -52,6 +56,12 @@ class GuitarTrainerApp:
                     print("Showing practice menu...")
                     selected_chords = await self.menu.show_menu_and_wait_for_selection()
                     print(f"Menu returned: {selected_chords}, type: {type(selected_chords)}")
+                    
+                    # Check if menu exited due to connection loss
+                    if selected_chords is None:
+                        print("Menu returned None - connection was likely lost")
+                        self.ble.connected = False
+                        break
                     
                     # Set the chord sequence
                     if selected_chords and len(selected_chords) > 0 and selected_chords[0] in ['R', 'S', 'M', 'H']:

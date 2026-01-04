@@ -21,16 +21,15 @@ class ChordDetector:
     
     def add_note(self, note, string_num, fret_num=None):
         """Add a note to the current chord"""
-        string_n = self.string_number_map.get(note)
         # print(f"add_note: note={note}, string_n={string_n}  {self.played_notes[4]}")
 
-        if string_n is None:
+        if string_num is None:
             print(f"Note {note} not in string map")
             return None
   
         # Reverse array: string 6 at index 0, string 1 at index 5
-        string_num = 6 - string_n
-        self.played_notes[string_num] = note # type: ignore
+
+        self.played_notes[5-string_num] = note # type: ignore
         # print(f"Added note {note} to string {string_num + 1}")
         return string_num
     

@@ -18,23 +18,28 @@ class MenuSystem:
         
         page = 0
         items_per_page = 4
+        data = None
+        connection_timeout_ms = 0
+        connection_check_interval_ms = 100  # Check connection every 100ms
         
-        while True:
-            self._display_menu(page, items_per_page)
-            
-            # Get next MIDI message from queue (non-blocking)
-            data = self.ble.wait_for_queued_midi()
-            
-            if data:
-                print(f"[MENU] Received MIDI data: {' '.join(f'{b:02x}' for b in data)}")
-                msg = self._parse_midi(data)
+        try:
+            while self.ble.connected:
+                self._display_menu(page, items_per_page) 
                 
+                # Get next MIDI message from queue (non-blocking)
+                data = await self.ble.wait_for_queued_midi()
+
                 # Debug: show all note messages
-                if msg:
-                    if msg[0] == 'note_on':
-                        note = msg[1]
-                        velocity = msg[2]
-                        print(f"[MENU] Got Note On: {note} velocity: {velocity}")
+                if data:
+                    command = data[0]
+                    string_num = data[1] 
+                    fret_num = data[2]
+                    note = data[3]
+                    fret_pressed = data[4] 
+                    print(f"[MENU] MIDI MESSAGE: Command: {hex(command)}, String: {string_num}, Fret: {fret_num}, Note: {note}, Fret Pressed: {fret_pressed}" )
+                    connection_timeout_ms = 0  # Reset timeout on data received
+                    if command == 0x90:  # Note On
+                        print(f"[MENU] Got Note On: {note}")
                         
                         # Navigation controls
                         if note == 86:  # String 1, 22nd fret - Next page
@@ -49,12 +54,10 @@ class MenuSystem:
                             continue
                         
                         # Check if it's a 22nd fret selection (strings 3-6 = indices 2-5)
-                        if note in SELECTION_NOTES:
-                            string_num = SELECTION_NOTES.index(note)
-                            print(f"[MENU] Selection note detected: note={note}, string={string_num}")
-                            # Only select if it's strings 3-6 (indices 2-5)
+                        if fret_num == 22:
                             if string_num >= 2:
                                 selected_index = page * items_per_page + (string_num - 2)
+                                print(f"[MENU] Selected index: {selected_index}")
                                 if selected_index < len(PRACTICE_OPTIONS):
                                     selected_chords = list(PRACTICE_OPTIONS[selected_index][1])
                                     print(f"[MENU] Selected: {PRACTICE_OPTIONS[selected_index][0]}")
@@ -67,12 +70,27 @@ class MenuSystem:
                                     await asyncio.sleep(0.5)
                                     
                                     return selected_chords
-                    elif msg[0] == 'note_off':
-                        print(f"[MENU] Got Note Off: {msg[1]}")
+                    elif command == 0x80:  # Note Off
+                        print(f"[MENU] Got Note Off: {note}")
                         pass  # Ignore note off
-            else:
-                # No messages in queue, sleep briefly
-                await asyncio.sleep_ms(50)
+                else:
+                    # No messages in queue, sleep briefly and track timeout
+                    connection_timeout_ms += connection_check_interval_ms
+                    await asyncio.sleep_ms(connection_check_interval_ms)
+                    
+                    # Every 1 second, explicitly check if connection is still alive
+                    if connection_timeout_ms >= 1000:
+                        if not self.ble.connected:
+                            print("[MENU] Connection lost, exiting menu")
+                            break
+                        connection_timeout_ms = 0
+                        
+        except Exception as e:
+            print(f"[MENU] Error in show_menu_and_wait_for_selection: {type(e).__name__}: {e}")
+        
+        # Return None to signal menu was exited (connection lost)
+        print("[MENU] Menu exited, returning None")
+        return None
     
     async def show_bpm_menu(self):
         """Show BPM selection menu"""
@@ -95,15 +113,18 @@ class MenuSystem:
         print("BPM menu displayed. Waiting for 22nd fret selection...")
         
         # Wait for selection
-        while True:
+        connection_timeout_ms = 0
+        connection_check_interval_ms = 100
+        
+        while self.ble.connected:
             # Get next MIDI message from queue (non-blocking)
-            data = self.ble.wait_for_queued_midi()
-            
+            data = await self.ble.wait_for_queued_midi()
             if data:
+                print(f"[BPM MENU] Received MIDI data: {' '.join(f'{b:02x}' for b in data)}")
                 msg = self._parse_midi(data)
                 if msg and msg[0] == 'note_on':
                     note = msg[1]
-                    print(f"BPM Menu - Note received: {note}")
+                    print(f"[BPM MENU] Note received: {note}")
                     
                     # Check if it's a 22nd fret note
                     if note in SELECTION_NOTES:
@@ -120,9 +141,22 @@ class MenuSystem:
                             await asyncio.sleep(0.5)
                             
                             return selected_bpm
+                connection_timeout_ms = 0
             else:
                 # No messages in queue, sleep briefly
-                await asyncio.sleep_ms(50)
+                connection_timeout_ms += connection_check_interval_ms
+                await asyncio.sleep_ms(connection_check_interval_ms)
+                
+                # Every 1 second, check connection status
+                if connection_timeout_ms >= 1000:
+                    if not self.ble.connected:
+                        print("[BPM MENU] Connection lost, exiting menu")
+                        return None
+                    connection_timeout_ms = 0
+        
+        # Connection was lost
+        print("[BPM MENU] BLE disconnected, exiting menu")
+        return None
     
     def _display_menu(self, page, items_per_page=4):
         """Display the current menu page"""
@@ -159,7 +193,7 @@ class MenuSystem:
         - Note On: [0x90-0x9F, note, velocity]
         - Note Off: [0x80-0x8F, note] or [0x90-0x9F, note, 0x00]
         """
-        if not data or len(data) < 2:
+        if not data or len(data) < 3:
             return None
         
         midi_status = data[0]
@@ -167,12 +201,12 @@ class MenuSystem:
         # Note On: 0x90-0x9F
         if 0x90 <= midi_status <= 0x9F:
             if len(data) >= 3:
-                note = data[1]
-                velocity = data[2]
-                if velocity > 0:
-                    return ('note_on', note, velocity)
+                string_number = data[1]
+                note = data[2]
+                if note > 0:
+                    return ('note_on', string_number, note)
                 else:
-                    return ('note_off', note)
+                    return ('note_off', string_number)
         
         # Note Off: 0x80-0x8F
         elif 0x80 <= midi_status <= 0x8F:

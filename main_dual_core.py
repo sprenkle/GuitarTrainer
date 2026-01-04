@@ -31,12 +31,15 @@ async def main():
     # Set rotation
     tft.set_rotation(0)
     
-    # Create app with dual-core BLE manager
-    app = GuitarTrainerApp(tft)
+    # Create BLE manager with shared queue
+    app_ble = BLEConnectionManagerDualCore(None, shared_queue=shared_midi_queue)
     
-    # Replace the BLE connection manager with the dual-core version
-    # that uses the shared queue
-    app.ble = BLEConnectionManagerDualCore(app.display, shared_queue=shared_midi_queue)
+    # Create app with dual-core BLE manager
+    # Pass the BLE manager to the app so it uses the shared queue
+    app = GuitarTrainerApp(tft, ble_manager=app_ble)
+    
+    # Set the display on the BLE manager after creating the app
+    app_ble.display = app.display
     
     print("[CPU0] Application initialized with shared MIDI queue for inter-core communication")
     

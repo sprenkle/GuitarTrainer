@@ -61,30 +61,28 @@ class MIDIDebugger:
         
         try:
             frets = [0, 0, 0, 0, 0, 0]
+            
             while self.ble.connected:
                 try:
                     # Get MIDI data from the queued messages
-                    data = self.ble.wait_for_queued_midi(timeout_ms=100)
-                    
+                    record = [0, 0, 0, 0]
+                    data = await self.ble.wait_for_queued_midi()
                     if data:
-                        if data[0] == 176:
-                            string_num = data[1]
-                            fret_num = data[3]
-                            
-                            if data[2] & 0x01:
-                                frets[string_num] = fret_num
-                            else:
-                                frets[string_num] = 0
+                        # Messages are 5 bytes: 0-command, 1-string_number, 2-Fret, 3-Note, 4-Fret_Pressed
+                        command = data[0]
+                        string_num = data[1] 
+                        fret_num = data[2]
+                        note = data[3]
+                        fret_pressed = data[4] 
+                        frets[string_num] = fret_pressed
 
-                            fret_display = ' | '.join(f'[{i}:{fret}]' for i, fret in enumerate(frets))
-                            print(f"[Note On] String {string_num}, Fret {fret_num})")
-                            print(f"         Frets: {fret_display}")
+                        # print(f"[MIDI MESSAGE {message_count}] Command: {hex(command)}, String: {string_num}, Fret: {fret_num}, Note: {note}, Fret Pressed: {fret_pressed}")
 
-                        print(f"[Notification {data}")
                         await asyncio.sleep_ms(1)
                     else:
                         # Small sleep to prevent busy-waiting when no data
                         await asyncio.sleep_ms(1)
+
                         
                 except Exception as e:
                     print(f"Error: {e}")

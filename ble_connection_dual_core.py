@@ -8,6 +8,7 @@ import network
 import _thread
 import time
 from config import MIDI_SERVICE_UUID, MIDI_CHAR_UUID
+import config
 
 
 class SharedMIDIMessageQueue:
@@ -239,7 +240,6 @@ class BLEConnectionManagerDualCore:
         loop is processing other tasks.
         """
         print("[CPU0] Background MIDI reader started")
-        message_count = 0
         
         while self.connected and self.midi_characteristic:
             try:
@@ -260,22 +260,13 @@ class BLEConnectionManagerDualCore:
                         # Queue each individual MIDI message
                         for msg in messages:
                             self.message_queue.put(msg)
-                            message_count += 1
+                            # print(f"Added to queue: {msg} - {self.message_queue.size()}")
                         
-                        hex_str = ' '.join(f'{b:02x}' for b in data)
-                        print(f"[CPU0] #{message_count} Received notification with {len(messages)} MIDI message(s): {hex_str}")
-                        
-                        # Optionally log queue status when messages are dropped
-                        stats = self.message_queue.get_stats()
-                        if stats['dropped'] > 0 or message_count <= 5:  # Log first few messages
-                            print(f"[CPU0] Queue: {stats['size']}/{stats['max_size']} messages, "
-                                  f"{stats['dropped']} dropped")
             except Exception as e:
                 # Log error but continue running
                 print(f"[CPU0] MIDI reader error: {type(e).__name__}: {e}")
                 await asyncio.sleep_ms(1)
         
-        print(f"[CPU0] Background MIDI reader stopped (received {message_count} total messages)")
     
     def start_background_reader(self):
         """Start the background MIDI reader task"""
@@ -290,6 +281,7 @@ class BLEConnectionManagerDualCore:
         BLE MIDI format: [header, timestamp, midi_status, midi_data1, midi_data2, ...]
         A single notification can contain multiple MIDI messages
         Returns a list of individual MIDI messages (as bytes)
+        Messages are 4 bytes 0-command 1-string_number 2-Fret 3-Note 4-Fret_Pressed
         """
         messages = []
         
@@ -299,63 +291,92 @@ class BLEConnectionManagerDualCore:
         
         if len(data) < 3:
             return messages
-        
         i = 2  # Skip BLE header and timestamp
         
         while i < len(data):
             midi_status = data[i]
             command = midi_status & 0xF0
-            string_number = midi_status & 0x0F
+            if command == 0xb0:
+                string_number = midi_status & 0x0F    
+            else:
+                string_number = 5 - (midi_status & 0x0F)    
+            # print(f'String number: {string_number} command: {hex(command)}')
             # 3-byte messages: Note On (0x90-0x9F), Control Change (0xB0-0xBF), Pitch Wheel (0xE0-0xEF)
             if (0x80 == command or
                 0x90 == command or
                 0xA0 == command or 
                 0xB0 == command or 
                 0xE0 == command):
-                if i + 2 < len(data):
-                    msg = [command, string_number, data[i+1], data[i+2]]
+                if (0x80 == command or
+                    0x90 == command or
+                    0xA0 == command or
+                    0xB0 == command):
+                    
+                    if command == 0x90:
+                        fret_pressed = 1
+                    elif command == 0x80:
+                        fret_pressed = 0
+                    else:
+                        fret_pressed = data[i+1] & 0x01
+
+                    if command == 0xB0:
+                        fret_number = data[i+2]
+                        note = config.get_note_from_string_fret(string_number, fret_number)
+                    else:
+                        note = data[i+1]
+                        fret_number = config.get_fret_from_string_note(string_number, note)
+
+                    msg = [command, string_number, fret_number, note, fret_pressed]
+                    print(f'Parsed MIDI message: Command={hex(command)}, String={string_number}, Fret={fret_number}, Note={note}, Fret_Pressed={fret_pressed}')
+
                     messages.append(msg)
+
+
+                if i + 2 < len(data):
                     i += 3
                 else:
+                    print(f"Incomplete MIDI message at end of data, stopping parse")
                     break
             
             # 2-byte messages: Note Off (0x80-0x8F), Program Change (0xC0-0xCF), Channel Pressure (0xD0-0xDF)
             elif (0xC0 == command or 
                   0xD0 == command):
                 if i + 1 < len(data):
-                    msg = [command, string_number, data[i+1]]
+                    msg = [command, string_number, 0, config.OPEN_STRING_NOTES[string_number], False]
                     messages.append(msg)
                     i += 2
                 else:
+                    print(f"Incomplete MIDI message at end of data, stopping parse")
                     break
             
             # System messages and other status bytes
             else:
-                print(f"Unknown MIDI status byte: {midi_status:02x}, skipping")
+                print(f"Unknown MIDI status byte: {data}, skipping")
                 i += 1
         
         return messages
     
-    def wait_for_queued_midi(self, timeout_ms=100):
-        """Get the next queued MIDI message (non-blocking, thread-safe)
+    async def wait_for_queued_midi(self, timeout_ms=100):
+        """Get the next queued MIDI message (truly non-blocking, thread-safe)
+        
+        Returns immediately with a message if available, or None if queue is empty.
+        Does NOT block/loop waiting for messages.
         
         Args:
-            timeout_ms: Timeout in milliseconds (currently not used, returns immediately)
+            timeout_ms: Unused (kept for API compatibility)
             
         Returns:
             MIDI message data if available, None if queue is empty
         """
-        return self.message_queue.get()
-    
-    async def wait_for_midi(self, timeout=0.5):
-        """Wait for MIDI data with timeout (legacy, use wait_for_queued_midi instead)"""
-        if not self.midi_characteristic:
-            print("DEBUG BLE: midi_characteristic not set!")
-            raise RuntimeError("Not connected to MIDI device")
-        
         try:
-            data = await asyncio.wait_for(self.midi_characteristic.notified(), timeout=timeout)
-            print(f"DEBUG BLE: Received notification: {data}")
-            return data
-        except asyncio.TimeoutError:
+            # Get ONE message if available, return immediately
+            data = self.message_queue.get()
+            if data:
+                return data
+            else:
+                return None
+        except Exception as e:
+            print(f"[CPU0] MIDI wait error: {type(e).__name__}: {e}")
             return None
+    
+   

@@ -163,15 +163,11 @@ class RegularPracticeMode(PracticeMode):
             # if self.chord_display:
             #     self.chord_display.display_target_chord(target_chord, progress_text)
             
-            
-            
-            # await asyncio.sleep_ms(500)
-            # self.detector.reset()
-            # timeout_task = None
-            # self.collected_strings = [None] * 6
-            # started = False
-            # notes_hit = False
-            # self.detector.reset()
+        timeout_task = None
+        self.collected_strings = [None] * 6
+        started = False
+        notes_hit = False
+        self.detector.reset()
 
         try:
             while self.ble.connected:
@@ -181,7 +177,7 @@ class RegularPracticeMode(PracticeMode):
                     return 'menu'
                 
                 # Get MIDI data from the queue (non-blocking)
-                data = self.ble.wait_for_queued_midi()
+                data = await self.ble.wait_for_queued_midi()
                 
                 if not data:
                     # No messages in queue, sleep briefly to avoid busy-waiting
@@ -189,14 +185,26 @@ class RegularPracticeMode(PracticeMode):
                     continue
                 
                 # Process the queued message
-                msg = self._parse_midi(data)
-                print(f"Parsed: {msg}")
+                command = data[0]
+                string_num = data[1] 
+                fret_num = data[2]
+                note = data[3]
+                fret_pressed = data[4] 
+
                 
                 # Handle fret press/release messages
-                if msg and msg[0] == 'fret_on':
+                if command == 0x90 or command == 0xB0:
                     # Fret pressed
-                    self.pressed_frets[msg[1]] = msg[2]
-                    print(f"Fret On: String {msg[1]} Fret {msg[2]}")
+                    if fret_pressed > 0:
+                        self.pressed_frets[string_num] = fret_num
+                    else:
+                        self.pressed_frets[string_num] = 0
+                    print(f"Fret On: String {string_num} Fret {fret_num}")
+
+                    # if command == 0x90:
+                    #     # Note on - add to detector
+                    #     self.detector.add_note(note, string_num, fret_num)
+
                     try:
                         self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text, self.pressed_frets)
                     except Exception as e:
@@ -204,10 +212,10 @@ class RegularPracticeMode(PracticeMode):
                         import sys
                         sys.print_exception(e)
                 
-                elif msg and msg[0] == 'fret_off':
+                if command == 0x80:
                     # Fret released
-                    self.pressed_frets[msg[1]] = 0
-                    print(f"Fret Off: String {msg[1]}")
+                    self.pressed_frets[string_num] = 0
+                    print(f"Fret Off: String {string_num} Fret {fret_num}")
                     try:
                         self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text, self.pressed_frets)
                     except Exception as e:
@@ -215,60 +223,22 @@ class RegularPracticeMode(PracticeMode):
                         import sys
                         sys.print_exception(e)
                 
-                if msg and msg[0] == 'note_on':
-                    note = msg[1]
-                    velocity = msg[2]
+                elif command == 0x90:  # Note on String struck
+                    # Cancel existing timeout before creating new one
+                    if timeout_task is not None:  
+                        timeout_task.cancel()
+
+                    self.detector.add_note(note, string_num, fret_num)
                     
-                    # Calculate string and fret from MIDI note
-                    from config import OPEN_STRING_NOTES
-                    string_num = None
-                    fret_num = None
-                    
-                    # Try to find which string this note belongs to
-                    for string_idx, open_note in enumerate(OPEN_STRING_NOTES):
-                        if note >= open_note:
-                            potential_fret = note - open_note
-                            if 0 <= potential_fret <= 24:  # Valid fret range
-                                string_num = string_idx
-                                fret_num = potential_fret
-                                break
-                    
-                    print(f"Check It Note On: Note {note} String {string_num} Fret {fret_num} msg={msg}")
+                    print(f"Check It Note On: Note {note} String {string_num} Fret {fret_num}")
 
                     # Check for navigation triggers on 22nd fret
                     if note == 86:  # String 1, 22nd fret - Menu
                         # print(f"Menu trigger detected")
                         return 'menu'
 
-                    # Update pressed frets for visual display
-                    if string_num is not None and fret_num is not None:
-                        self.pressed_frets[string_num] = fret_num
-                        print(f"Updated pressed_frets[{string_num}] = {fret_num}")
-                        try:
-                            self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text, self.pressed_frets)
-                        except Exception as e:
-                            print(f"Error in _show_live_fretboard: {e}")
-                            import sys
-                            sys.print_exception(e)
-
-                    # Add note to detector
-                    if string_num is not None and fret_num is not None:
-                        self.detector.add_note(note, string_num, fret_num)
-                    else:
-                        # Unknown string, still add to detector but with calculated values
-                        self.detector.add_note(note, 0, 0)
-                    
-                    # print(f"String: {string_num}")
-                    if string_num is None:
-                        # print("Unknown string, ignoring note")
-                        continue
-
-                    # Cancel existing timeout before creating new one
-                    if timeout_task is not None:  
-                        timeout_task.cancel()
-
                     if not started:
-                        if False and (string_num == 5 or string_num == 0):
+                        if (string_num == 5 or string_num == 0):
                             started = True
                             # print("Strum started")
                         else:
@@ -313,33 +283,33 @@ class RegularPracticeMode(PracticeMode):
                     self.collected_strings = [None] * 6
                 
                 # Handle note off to clear pressed frets
-                elif msg and msg[0] == 'note_off':
-                    note = msg[1]
+                # elif msg and msg[0] == 'note_off':
+                #     note = msg[1]
                     
-                    # Calculate string and fret from MIDI note
-                    from config import OPEN_STRING_NOTES
-                    string_num = None
+                #     # Calculate string and fret from MIDI note
+                #     from config import OPEN_STRING_NOTES
+                #     string_num = None
                     
-                    # Try to find which string this note belongs to
-                    for string_idx, open_note in enumerate(OPEN_STRING_NOTES):
-                        if note >= open_note:
-                            potential_fret = note - open_note
-                            if 0 <= potential_fret <= 24:  # Valid fret range
-                                string_num = string_idx
-                                break
+                #     # Try to find which string this note belongs to
+                #     for string_idx, open_note in enumerate(OPEN_STRING_NOTES):
+                #         if note >= open_note:
+                #             potential_fret = note - open_note
+                #             if 0 <= potential_fret <= 24:  # Valid fret range
+                #                 string_num = string_idx
+                #                 break
                     
-                    print(f"Note Off: Note {note} String {string_num}")
+                #     print(f"Note Off: Note {note} String {string_num}")
                     
-                    # Clear the pressed fret for this string
-                    if string_num is not None:
-                        self.pressed_frets[string_num] = 0
-                        print(f"Cleared pressed_frets[{string_num}]")
-                        try:
-                            self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text, self.pressed_frets)
-                        except Exception as e:
-                            print(f"Error in _show_live_fretboard: {e}")
-                            import sys
-                            sys.print_exception(e)
+                #     # Clear the pressed fret for this string
+                #     if string_num is not None:
+                #         self.pressed_frets[string_num] = 0
+                #         print(f"Cleared pressed_frets[{string_num}]")
+                #         try:
+                #             self._show_live_fretboard(self.target_chord, self.detector.get_played_notes(), progress_text, self.pressed_frets)
+                #         except Exception as e:
+                #             print(f"Error in _show_live_fretboard: {e}")
+                #             import sys
+                #             sys.print_exception(e)
                 
                 await asyncio.sleep_ms(1)
         
@@ -528,6 +498,7 @@ class RegularPracticeMode(PracticeMode):
         - Note Off: [0x80-0x8F, note]
         - Program Change: [0xB0-0xBF, controller, value] (fret press/release info)
         """
+        print(data)
         if not data or len(data) < 2:
             return None
         

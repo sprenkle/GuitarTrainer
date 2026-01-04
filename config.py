@@ -99,6 +99,57 @@ SELECTION_NOTES = [86, 81, 77, 72, 67, 62]
 # BPM options for metronome
 BPM_OPTIONS = [60, 80, 100, 120, 140, 160]
 
+
+# Helper methods for string/fret to MIDI note conversion
+def get_note_from_string_fret(string, fret):
+    """Convert guitar string and fret to MIDI note number
+    
+    Args:
+        string: Guitar string number (1-6, where 1 is high E string)
+        fret: Fret number (0-24)
+        
+    Returns:
+        MIDI note number (0-127)
+        
+    Example:
+        get_note_from_string_fret(1, 0) -> 64 (high E open string)
+        get_note_from_string_fret(1, 5) -> 69 (A on string 1, 5th fret)
+    """
+    if string < 0 or string > 5:
+        raise ValueError(f"String must be 1-6, got {string}")
+    if fret < 0 or fret > 24:
+        raise ValueError(f"Fret must be 0-24, got {fret}")
+    
+    return OPEN_STRING_NOTES[string] + fret
+
+
+def get_fret_from_string_note(string, note):
+    """Convert guitar string and MIDI note to fret number
+    
+    Args:
+        string: Guitar string number (1-6, where 1 is high E string)
+        note: MIDI note number (0-127)
+        
+    Returns:
+        Fret number (0-24), or None if note is not on this string
+        
+    Example:
+        get_fret_from_string_note(1, 64) -> 0 (high E open string)
+        get_fret_from_string_note(1, 69) -> 5 (A on string 1, 5th fret)
+    """
+    if string < 0 or string > 5:
+        raise ValueError(f"String must be 1-6, got {string}")
+    
+    open_note = OPEN_STRING_NOTES[string]
+    fret = note - open_note
+    # print(f'Calculating fret for string {string}, note {note}: open_note={open_note}, fret={fret}')
+    # Check if fret is valid
+    if fret < 0 or fret > 24:
+        return None
+    
+    return fret
+
+
 # Display colors (will be computed at runtime)
 class Colors:
     BLACK = None
