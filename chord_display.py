@@ -174,7 +174,7 @@ class ChordDisplay:
         self.tft.vline(start_x+1, start_y, string_spacing * 5, Colors.WHITE)
         
         # Draw 4 frets (vertical lines) - thicker
-        for i in range(1, 5):
+        for i in range(1, 4):
             x = start_x + (i * fret_width)
             # Draw thicker lines
             self.tft.vline(x, start_y, string_spacing * 5, Colors.WHITE)
@@ -185,10 +185,12 @@ class ChordDisplay:
             x = start_x + (i * fret_width) - (fret_width // 2) - 4
             y = start_y + string_spacing * 5 + 8
             self.tft.text(str(i), x, y, Colors.WHITE)
-        
+        print(f'Drawing chord shape for {chord_name}: {chord_shape}')
         # Draw finger positions for each string
-        for string_num, fret_num in chord_shape:
-            string_y = start_y + ((string_num - 1) * string_spacing)
+        for string_num in range(6):
+        
+            fret_num = chord_shape[string_num] - OPEN_STRING_NOTES[string_num]
+            string_y = start_y + ((string_num ) * string_spacing)
             
             if fret_num < 0:
                 # Muted string - draw X
@@ -426,14 +428,7 @@ class ChordDisplay:
                 # Mute this string
                 shape.append((string_num, -1))
         
-        return shape
-        """Display when wrong chord is played"""
-        self.display.clear()
-        self.display.text("Wrong!", 90, 80, Colors.RED)
-        self.display.text(f"Target: {target_chord}", 60, 110, Colors.YELLOW)
-        if played_chord:
-            self.display.text(f"Played: {played_chord}", 60, 130, Colors.ORANGE)
-        self.display.show()
+        return CHORD_MIDI_NOTES.get(chord_name, [])
     
     def update_live_display(self, target_chord, played_notes, progress):
         """Update display with live chord detection progress"""

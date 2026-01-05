@@ -118,7 +118,7 @@ class RegularPracticeMode(PracticeMode):
         self.target_chord = self.chord_sequence[self.current_chord_index]
         # print(f"=== DISPLAY CHORD: {self.target_chord} ===")
         progress_text = f"{self.current_chord_index + 1}/{len(self.chord_sequence)}"
-
+        print(f"Practice Mode: Hide chord: {self.hide_diagram}")
         if self.hide_diagram:
             # Hide mode: show only chord name, no diagram
             self.display.tft.fill(Colors.BLACK)
